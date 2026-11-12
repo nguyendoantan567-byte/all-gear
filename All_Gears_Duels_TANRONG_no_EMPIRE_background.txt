@@ -1,3 +1,4 @@
+```
 --[[
 TANRONG — Full Menu
 Tab 1 Player: Anti Gummy/Ragdoll/Paintball/Boogie + Speed 3-mode (tanrong S2 loop)
@@ -26,7 +27,7 @@ local PlayerGui = LP:WaitForChild("PlayerGui", 30) or LP:FindFirstChild("PlayerG
 
 pcall(function()
 	for _, n in ipairs({
-"TANRONGHubFullMenu", "TANRONGHubFullMini", "TANRONGHubModeBar", "TANRONGHubActionButtons", "TANRONGIntro", "TANRONGHubIntro",
+"TANRONGHubFullMenu", "TANRONGHubFullMini", "TANRONGHubModeBar", "TANRONGHubActionButtons", "TANRONGIntro", "LIGHTHUBIntro", "TANRONGHubIntro",
 	}) do
 local g = PlayerGui:FindFirstChild(n)
 if g then g:Destroy() end
@@ -113,353 +114,483 @@ task.spawn(function()
 end)
 
 ----------------------------------------------------------------
--- TANRONG.CC INTRO (red/black/white, music + skip)
+-- LIGHT HUB DIVINE LIGHT INTRO (pearl / champagne / celestial blue)
 ----------------------------------------------------------------
 do
-	local TweenService = TS
-	local SoundService = game:GetService("SoundService")
-	--============================================================
-	-- INTRO SETTINGS
-	--============================================================
+    local TweenService = TS
+    local SoundService = game:GetService("SoundService")
 
-	local MUSIC_URL = "https://files.catbox.moe/qhpfe5.mp3"
-	local MUSIC_FILE = "ShadowVS_Music.mp3"
-	local MUSIC_VOLUME = 0.75
-	local BPM = 100
-	local BEAT = 60 / BPM
-	local BACKGROUND_ID = "rbxassetid://77503307528071"
-	-- Prefer TANRONG logo as intro background
-	pcall(function()
-		local a = getTanrongLogoAsset and getTanrongLogoAsset()
-		if a and a ~= "" then BACKGROUND_ID = a end
-	end)
+    local MUSIC_URL = "https://files.catbox.moe/qhpfe5.mp3"
+    local MUSIC_FILE = "ShadowVS_Music.mp3"
+    local MUSIC_VOLUME = 0.75
+    local BPM = 100
+    local BEAT = 60 / BPM
+    -- Use the neutral intro artwork, not the old TANRONG wordmark image.
+    local BACKGROUND_ID = "rbxassetid://77503307528071"
 
-	--============================================================
-	-- INTRO STATE
-	--============================================================
+    local PEARL = Color3.fromRGB(255, 252, 242)
+    local CHAMPAGNE = Color3.fromRGB(245, 218, 164)
+    local SOFT_GOLD = Color3.fromRGB(219, 184, 112)
+    local SKY_LIGHT = Color3.fromRGB(183, 222, 250)
+    local MIDNIGHT = Color3.fromRGB(5, 12, 29)
 
-	local introActive = true
-	local introFinished = false
-	local introSound = nil
-	local introGui = nil
+    local introActive = true
+    local introFinished = false
+    local introSound = nil
+    local introGui = nil
+    local inputConnection = nil
 
-	--============================================================
-	-- SHOW INTRO FIRST
-	--============================================================
+    local function createIntro()
+        for _, name in ipairs({"TANRONGIntro", "LIGHTHUBIntro"}) do
+            local old = PlayerGui:FindFirstChild(name)
+            if old then old:Destroy() end
+        end
+        for _, soundName in ipairs({"TANRONGIntroMusic", "LIGHTHUBIntroMusic"}) do
+            local oldSound = SoundService:FindFirstChild(soundName)
+            if oldSound then pcall(function() oldSound:Stop(); oldSound:Destroy() end) end
+        end
 
-	local function createIntro()
-	    -- Clean old intro
-	    for _, name in ipairs({"TANRONGIntro"}) do
-	        local old = PlayerGui:FindFirstChild(name)
-	        if old then old:Destroy() end
-	    end
+        introGui = Instance.new("ScreenGui")
+        introGui.Name = "LIGHTHUBIntro"
+        introGui.IgnoreGuiInset = true
+        introGui.ResetOnSpawn = false
+        introGui.DisplayOrder = 999999
+        introGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        introGui.Parent = PlayerGui
 
-	    introGui = Instance.new("ScreenGui")
-	    introGui.Name = "TANRONGIntro"
-	    introGui.IgnoreGuiInset = true
-	    introGui.ResetOnSpawn = false
-	    introGui.DisplayOrder = 999999
-	    introGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	    introGui.Parent = PlayerGui
+        local background = Instance.new("Frame")
+        background.Name = "DivineBackground"
+        background.Size = UDim2.fromScale(1, 1)
+        background.BackgroundColor3 = MIDNIGHT
+        background.BorderSizePixel = 0
+        background.ClipsDescendants = true
+        background.Parent = introGui
+        local bgGradient = Instance.new("UIGradient")
+        bgGradient.Rotation = 90
+        bgGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(3, 8, 22)),
+            ColorSequenceKeypoint.new(0.42, Color3.fromRGB(17, 36, 62)),
+            ColorSequenceKeypoint.new(0.72, Color3.fromRGB(33, 54, 78)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(4, 11, 27)),
+        })
+        bgGradient.Parent = background
 
-	    -- Background (Black)
-	    local background = Instance.new("Frame", introGui)
-	    background.Size = UDim2.fromScale(1, 1)
-	    background.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	    background.BorderSizePixel = 0
-	    background.ClipsDescendants = true
+        local bgImage = Instance.new("ImageLabel")
+        bgImage.Name = "CelestialBackdrop"
+        bgImage.AnchorPoint = Vector2.new(0.5, 0.5)
+        bgImage.Position = UDim2.fromScale(0.5, 0.5)
+        bgImage.Size = UDim2.fromScale(1.08, 1.08)
+        bgImage.BackgroundTransparency = 1
+        bgImage.Image = BACKGROUND_ID
+        bgImage.ImageColor3 = Color3.fromRGB(215, 229, 245)
+        bgImage.ImageTransparency = 0.32
+        bgImage.ScaleType = Enum.ScaleType.Crop
+        bgImage.ZIndex = 1
+        bgImage.Active = false
+        bgImage.Selectable = false
+        bgImage.Parent = background
 
-	    -- Background Image
-	    local bgImage = Instance.new("ImageLabel", background)
-	    bgImage.AnchorPoint = Vector2.new(0.5, 0.5)
-	    bgImage.Position = UDim2.fromScale(0.5, 0.5)
-	    bgImage.Size = UDim2.fromScale(1.08, 1.08)
-	    bgImage.BackgroundTransparency = 1
-	    bgImage.Image = BACKGROUND_ID
-	    bgImage.ImageTransparency = 1
-	    bgImage.ScaleType = Enum.ScaleType.Crop
-	    bgImage.ZIndex = 1
+        local shade = Instance.new("Frame")
+        shade.Name = "MidnightShade"
+        shade.Size = UDim2.fromScale(1, 1)
+        shade.BackgroundColor3 = MIDNIGHT
+        shade.BackgroundTransparency = 0.34
+        shade.BorderSizePixel = 0
+        shade.ZIndex = 2
+        shade.Active = false
+        shade.Parent = background
+        local shadeGrad = Instance.new("UIGradient")
+        shadeGrad.Rotation = 90
+        shadeGrad.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.18),
+            NumberSequenceKeypoint.new(0.5, 0.58),
+            NumberSequenceKeypoint.new(1, 0.14),
+        })
+        shadeGrad.Parent = shade
 
-	    -- Dark Overlay
-	    local dark = Instance.new("Frame", background)
-	    dark.Size = UDim2.fromScale(1, 1)
-	    dark.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	    dark.BackgroundTransparency = 0.35
-	    dark.BorderSizePixel = 0
-	    dark.ZIndex = 2
+        -- Central soft aura.
+        local aura = Instance.new("Frame")
+        aura.Name = "DivineAura"
+        aura.AnchorPoint = Vector2.new(0.5, 0.5)
+        aura.Position = UDim2.fromScale(0.5, 0.43)
+        aura.Size = UDim2.fromScale(0.52, 0.78)
+        aura.BackgroundColor3 = CHAMPAGNE
+        aura.BackgroundTransparency = 0.91
+        aura.BorderSizePixel = 0
+        aura.ZIndex = 3
+        aura.Active = false
+        aura.Parent = background
+        Instance.new("UICorner", aura).CornerRadius = UDim.new(1, 0)
+        local auraGrad = Instance.new("UIGradient")
+        auraGrad.Rotation = 90
+        auraGrad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, SKY_LIGHT),
+            ColorSequenceKeypoint.new(0.5, PEARL),
+            ColorSequenceKeypoint.new(1, CHAMPAGNE),
+        })
+        auraGrad.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.98),
+            NumberSequenceKeypoint.new(0.5, 0.62),
+            NumberSequenceKeypoint.new(1, 0.98),
+        })
+        auraGrad.Parent = aura
 
-	    -- Skip Button
-	    local skip = Instance.new("TextButton", introGui)
-	    skip.AnchorPoint = Vector2.new(1, 0)
-	    skip.Position = UDim2.new(1, -14, 0, 14)
-	    skip.Size = UDim2.fromOffset(105, 36)
-	    skip.BackgroundColor3 = Color3.fromRGB(20, 0, 0)
-	    skip.BackgroundTransparency = 0.15
-	    skip.BorderSizePixel = 0
-	    skip.Text = "SKIP INTRO"
-	    skip.TextColor3 = Color3.fromRGB(255, 255, 255)
-	    skip.TextSize = 12
-	    skip.Font = Enum.Font.GothamBold
-	    skip.AutoButtonColor = false
-	    skip.ZIndex = 500
+        -- Thin, animated rays of heavenly light.
+        local rays = {}
+        for i = 1, 18 do
+            local ray = Instance.new("Frame")
+            ray.Name = "DivineRay" .. i
+            ray.AnchorPoint = Vector2.new(0.5, 0.5)
+            ray.Position = UDim2.fromScale(0.5, 0.43)
+            ray.Size = UDim2.new(0, (i % 3 == 0) and 7 or 4, 1.35, 0)
+            ray.Rotation = (i - 1) * 20
+            ray.BackgroundColor3 = (i % 2 == 0) and CHAMPAGNE or SKY_LIGHT
+            ray.BackgroundTransparency = 0.84 + ((i % 4) * 0.025)
+            ray.BorderSizePixel = 0
+            ray.ZIndex = 4
+            ray.Active = false
+            ray.Parent = background
+            local rayGrad = Instance.new("UIGradient")
+            rayGrad.Rotation = 90
+            rayGrad.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1),
+                NumberSequenceKeypoint.new(0.42, 0.62),
+                NumberSequenceKeypoint.new(0.52, 0.2),
+                NumberSequenceKeypoint.new(0.62, 0.62),
+                NumberSequenceKeypoint.new(1, 1),
+            })
+            rayGrad.Parent = ray
+            rays[#rays + 1] = ray
+        end
 
-	    local skipCorner = Instance.new("UICorner", skip)
-	    skipCorner.CornerRadius = UDim.new(0, 7)
+        -- Two fine halo rings behind the title.
+        local haloOuter = Instance.new("Frame")
+        haloOuter.Name = "HaloOuter"
+        haloOuter.AnchorPoint = Vector2.new(0.5, 0.5)
+        haloOuter.Position = UDim2.fromScale(0.5, 0.405)
+        haloOuter.Size = UDim2.fromOffset(230, 230)
+        haloOuter.BackgroundTransparency = 1
+        haloOuter.BorderSizePixel = 0
+        haloOuter.ZIndex = 5
+        haloOuter.Active = false
+        haloOuter.Parent = background
+        Instance.new("UICorner", haloOuter).CornerRadius = UDim.new(1, 0)
+        local haloOuterStroke = Instance.new("UIStroke", haloOuter)
+        haloOuterStroke.Color = CHAMPAGNE
+        haloOuterStroke.Thickness = 2.2
+        haloOuterStroke.Transparency = 0.24
+        local haloOuterGrad = Instance.new("UIGradient", haloOuterStroke)
+        haloOuterGrad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, SKY_LIGHT),
+            ColorSequenceKeypoint.new(0.5, PEARL),
+            ColorSequenceKeypoint.new(1, SOFT_GOLD),
+        })
+        local haloInner = Instance.new("Frame")
+        haloInner.Name = "HaloInner"
+        haloInner.AnchorPoint = Vector2.new(0.5, 0.5)
+        haloInner.Position = UDim2.fromScale(0.5, 0.405)
+        haloInner.Size = UDim2.fromOffset(184, 184)
+        haloInner.BackgroundTransparency = 1
+        haloInner.BorderSizePixel = 0
+        haloInner.ZIndex = 5
+        haloInner.Active = false
+        haloInner.Parent = background
+        Instance.new("UICorner", haloInner).CornerRadius = UDim.new(1, 0)
+        local haloInnerStroke = Instance.new("UIStroke", haloInner)
+        haloInnerStroke.Color = SKY_LIGHT
+        haloInnerStroke.Thickness = 1.2
+        haloInnerStroke.Transparency = 0.45
 
-	    local skipStroke = Instance.new("UIStroke", skip)
-	    skipStroke.Color = Color3.fromRGB(255, 0, 0)
-	    skipStroke.Transparency = 0.5
-	    skipStroke.Thickness = 1
+        -- Floating sparkles with a very light animation load.
+        local sparkles = {}
+        for i = 1, 34 do
+            local star = Instance.new("TextLabel")
+            star.Name = "LightSparkle" .. i
+            star.AnchorPoint = Vector2.new(0.5, 0.5)
+            star.Position = UDim2.fromScale(((i * 37) % 97) / 100, ((i * 61) % 93) / 100)
+            star.Size = UDim2.fromOffset((i % 5 == 0) and 18 or 11, (i % 5 == 0) and 18 or 11)
+            star.BackgroundTransparency = 1
+            star.Text = (i % 4 == 0) and "✦" or "·"
+            star.TextColor3 = (i % 2 == 0) and PEARL or CHAMPAGNE
+            star.TextTransparency = 0.26 + (i % 4) * 0.12
+            star.Font = Enum.Font.GothamBold
+            star.TextScaled = true
+            star.ZIndex = 7
+            star.Active = false
+            star.Selectable = false
+            star.Parent = background
+            sparkles[i] = {object = star, x = ((i * 37) % 97) / 100, y = ((i * 61) % 93) / 100, phase = i * 0.71}
+        end
 
-	    -- Flash (Red)
-	    local flash = Instance.new("Frame", introGui)
-	    flash.Size = UDim2.fromScale(1, 1)
-	    flash.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-	    flash.BackgroundTransparency = 1
-	    flash.BorderSizePixel = 0
-	    flash.ZIndex = 400
+        -- A warm white flash instead of the previous red beat flash.
+        local flash = Instance.new("Frame")
+        flash.Name = "PearlFlash"
+        flash.Size = UDim2.fromScale(1, 1)
+        flash.BackgroundColor3 = PEARL
+        flash.BackgroundTransparency = 1
+        flash.BorderSizePixel = 0
+        flash.ZIndex = 30
+        flash.Active = false
+        flash.Parent = introGui
 
-	    -- Main Title - "TANRONG" (RED)
-	    local introTitle = Instance.new("TextLabel", background)
-	    introTitle.AnchorPoint = Vector2.new(0.5, 0.5)
-	    introTitle.Position = UDim2.fromScale(0.5, 0.47)
-	    introTitle.Size = UDim2.fromScale(1.1, 0.22)
-	    introTitle.BackgroundTransparency = 1
-	    introTitle.Text = "TANRONG"
-	    introTitle.TextColor3 = Color3.fromRGB(255, 0, 0)
-	    introTitle.TextTransparency = 1
-	    introTitle.TextScaled = true
-	    introTitle.Font = Enum.Font.GothamBlack
-	    introTitle.ZIndex = 20
+        local welcome = Instance.new("TextLabel")
+        welcome.Name = "WelcomeLabel"
+        welcome.AnchorPoint = Vector2.new(0.5, 0.5)
+        welcome.Position = UDim2.fromScale(0.5, 0.275)
+        welcome.Size = UDim2.fromScale(0.7, 0.04)
+        welcome.BackgroundTransparency = 1
+        welcome.Text = "WELCOME TO THE LIGHT"
+        welcome.TextColor3 = SKY_LIGHT
+        welcome.TextTransparency = 1
+        welcome.Font = Enum.Font.GothamBold
+        welcome.TextSize = 13
+        welcome.ZIndex = 40
+        welcome.Active = false
+        welcome.Parent = background
 
-	    local titleStroke = Instance.new("UIStroke", introTitle)
-	    titleStroke.Color = Color3.fromRGB(0, 0, 0)
-	    titleStroke.Thickness = 3
-	    titleStroke.Transparency = 1
+        local introTitle = Instance.new("TextLabel")
+        introTitle.Name = "LIGHTHUBTitle"
+        introTitle.AnchorPoint = Vector2.new(0.5, 0.5)
+        introTitle.Position = UDim2.fromScale(0.5, 0.435)
+        introTitle.Size = UDim2.fromScale(0.78, 0.17)
+        introTitle.BackgroundTransparency = 1
+        introTitle.Text = "LIGHT HUB"
+        introTitle.TextColor3 = PEARL
+        introTitle.TextTransparency = 1
+        introTitle.TextScaled = true
+        introTitle.Font = Enum.Font.GothamBlack
+        introTitle.ZIndex = 41
+        introTitle.Active = false
+        introTitle.Parent = background
+        local titleGradient = Instance.new("UIGradient", introTitle)
+        titleGradient.Rotation = 0
+        titleGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, SKY_LIGHT),
+            ColorSequenceKeypoint.new(0.33, PEARL),
+            ColorSequenceKeypoint.new(0.66, CHAMPAGNE),
+            ColorSequenceKeypoint.new(1, PEARL),
+        })
+        local titleStroke = Instance.new("UIStroke", introTitle)
+        titleStroke.Color = Color3.fromRGB(104, 135, 166)
+        titleStroke.Thickness = 2.5
+        titleStroke.Transparency = 1
 
-	    -- Subtitle - "cc" (WHITE)
-	    local introSubtitle = Instance.new("TextLabel", background)
-	    introSubtitle.AnchorPoint = Vector2.new(0.5, 0.5)
-	    introSubtitle.Position = UDim2.fromScale(0.5, 0.57)
-	    introSubtitle.Size = UDim2.fromScale(0.4, 0.08)
-	    introSubtitle.BackgroundTransparency = 1
-	    introSubtitle.Text = ""
-	    introSubtitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-	    introSubtitle.TextTransparency = 1
-	    introSubtitle.TextScaled = true
-	    introSubtitle.Font = Enum.Font.GothamBold
-	    introSubtitle.ZIndex = 20
+        local introSubtitle = Instance.new("TextLabel")
+        introSubtitle.Name = "DivineSubtitle"
+        introSubtitle.AnchorPoint = Vector2.new(0.5, 0.5)
+        introSubtitle.Position = UDim2.fromScale(0.5, 0.535)
+        introSubtitle.Size = UDim2.fromScale(0.72, 0.06)
+        introSubtitle.BackgroundTransparency = 1
+        introSubtitle.Text = "A DIVINE LIGHT EXPERIENCE"
+        introSubtitle.TextColor3 = CHAMPAGNE
+        introSubtitle.TextTransparency = 1
+        introSubtitle.TextScaled = true
+        introSubtitle.Font = Enum.Font.GothamBold
+        introSubtitle.ZIndex = 41
+        introSubtitle.Active = false
+        introSubtitle.Parent = background
 
-	    -- Red Accent Line
-	    local accentLine = Instance.new("Frame", background)
-	    accentLine.AnchorPoint = Vector2.new(0.5, 0.5)
-	    accentLine.Position = UDim2.fromScale(0.5, 0.52)
-	    accentLine.Size = UDim2.fromScale(0, 0.003)
-	    accentLine.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-	    accentLine.BackgroundTransparency = 1
-	    accentLine.BorderSizePixel = 0
-	    accentLine.ZIndex = 15
+        local accentLine = Instance.new("Frame")
+        accentLine.Name = "CelestialAccentLine"
+        accentLine.AnchorPoint = Vector2.new(0.5, 0.5)
+        accentLine.Position = UDim2.fromScale(0.5, 0.59)
+        accentLine.Size = UDim2.fromScale(0, 0.003)
+        accentLine.BackgroundColor3 = PEARL
+        accentLine.BackgroundTransparency = 1
+        accentLine.BorderSizePixel = 0
+        accentLine.ZIndex = 39
+        accentLine.Active = false
+        accentLine.Parent = background
+        local accentGradient = Instance.new("UIGradient", accentLine)
+        accentGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, SKY_LIGHT),
+            ColorSequenceKeypoint.new(0.5, PEARL),
+            ColorSequenceKeypoint.new(1, CHAMPAGNE),
+        })
 
-	    -- Music Loader
-	    local function loadMusic()
-	        local asset
-	        pcall(function()
-	            if isfile and isfile(MUSIC_FILE) then
-	                asset = getcustomasset(MUSIC_FILE)
-	            end
-	        end)
-	        if not asset then
-	            local success, data = pcall(function()
-	                return game:HttpGet(MUSIC_URL)
-	            end)
-	            if success and data and #data > 1000 then
-	                pcall(function()
-	                    writefile(MUSIC_FILE, data)
-	                end)
-	                pcall(function()
-	                    asset = getcustomasset(MUSIC_FILE)
-	                end)
-	            end
-	        end
-	        return asset
-	    end
+        local skip = Instance.new("TextButton")
+        skip.Name = "SkipIntro"
+        skip.AnchorPoint = Vector2.new(1, 0)
+        skip.Position = UDim2.new(1, -18, 0, 18)
+        skip.Size = UDim2.fromOffset(122, 38)
+        skip.BackgroundColor3 = Color3.fromRGB(12, 27, 45)
+        skip.BackgroundTransparency = 0.12
+        skip.BorderSizePixel = 0
+        skip.Text = "SKIP INTRO"
+        skip.TextColor3 = PEARL
+        skip.TextSize = 12
+        skip.Font = Enum.Font.GothamBold
+        skip.AutoButtonColor = false
+        skip.ZIndex = 500
+        skip.Parent = introGui
+        Instance.new("UICorner", skip).CornerRadius = UDim.new(0, 10)
+        local skipStroke = Instance.new("UIStroke", skip)
+        skipStroke.Color = CHAMPAGNE
+        skipStroke.Transparency = 0.12
+        skipStroke.Thickness = 1.5
 
-	    -- Play Music
-	    task.spawn(function()
-	        local asset = loadMusic()
-	        if not asset or not introActive then return end
-	        introSound = Instance.new("Sound")
-	        introSound.Name = "TANRONGIntroMusic"
-	        introSound.SoundId = asset
-	        introSound.Volume = MUSIC_VOLUME
-	        introSound.Looped = false
-	        introSound.Parent = SoundService
-	        pcall(function() introSound:Play() end)
-	    end)
+        local function loadMusic()
+            local asset
+            pcall(function()
+                if isfile and isfile(MUSIC_FILE) and getcustomasset then
+                    asset = getcustomasset(MUSIC_FILE)
+                end
+            end)
+            if not asset then
+                local success, data = pcall(function() return game:HttpGet(MUSIC_URL) end)
+                if success and data and #data > 1000 then
+                    pcall(function() if writefile then writefile(MUSIC_FILE, data) end end)
+                    pcall(function() if getcustomasset then asset = getcustomasset(MUSIC_FILE) end end)
+                end
+            end
+            return asset
+        end
 
-	    -- Finish Intro
-	    local function finishIntro()
-	        if introFinished then return end
-	        introFinished = true
-	        introActive = false
-       
-	        if introSound then
-	            pcall(function()
-	                TweenService:Create(introSound, TweenInfo.new(0.35), { Volume = 0 }):Play()
-	            end)
-	            task.delay(0.4, function()
-	                pcall(function()
-	                    introSound:Stop()
-	                    introSound:Destroy()
-	                end)
-	            end)
-	        end
-       
-	        pcall(function() introGui:Destroy() end)
-	    end
+        local function finishIntro()
+            if introFinished then return end
+            introFinished = true
+            introActive = false
+            if inputConnection then
+                pcall(function() inputConnection:Disconnect() end)
+                inputConnection = nil
+            end
+            for _, soundName in ipairs({"LIGHTHUBIntroMusic", "TANRONGIntroMusic"}) do
+                local sound = SoundService:FindFirstChild(soundName)
+                if sound then pcall(function() sound:Stop(); sound:Destroy() end) end
+            end
+            if introSound then
+                pcall(function() introSound:Stop(); introSound:Destroy() end)
+                introSound = nil
+            end
+            if introGui then pcall(function() introGui:Destroy() end) end
+        end
 
-	    -- Skip
-	    skip.MouseButton1Click:Connect(finishIntro)
+        -- Any tap/click anywhere skips immediately. ESC also remains available.
+        inputConnection = UIS.InputBegan:Connect(function(input)
+            if not introActive then return end
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch
+                or input.KeyCode == Enum.KeyCode.Escape then
+                finishIntro()
+            end
+        end)
+        skip.Activated:Connect(finishIntro)
+        skip.MouseEnter:Connect(function()
+            TweenService:Create(skip, TweenInfo.new(0.12), {
+                BackgroundColor3 = Color3.fromRGB(39, 64, 86),
+                TextColor3 = CHAMPAGNE,
+            }):Play()
+        end)
+        skip.MouseLeave:Connect(function()
+            TweenService:Create(skip, TweenInfo.new(0.12), {
+                BackgroundColor3 = Color3.fromRGB(12, 27, 45),
+                TextColor3 = PEARL,
+            }):Play()
+        end)
 
-	    -- Skip Hover
-	    skip.MouseEnter:Connect(function()
-	        TweenService:Create(skip, TweenInfo.new(0.12), {
-	            BackgroundColor3 = Color3.fromRGB(60, 0, 0)
-	        }):Play()
-	    end)
-	    skip.MouseLeave:Connect(function()
-	        TweenService:Create(skip, TweenInfo.new(0.12), {
-	            BackgroundColor3 = Color3.fromRGB(20, 0, 0)
-	        }):Play()
-	    end)
+        task.spawn(function()
+            local asset = loadMusic()
+            if not asset or not introActive or not introGui or not introGui.Parent then return end
+            introSound = Instance.new("Sound")
+            introSound.Name = "LIGHTHUBIntroMusic"
+            introSound.SoundId = asset
+            introSound.Volume = MUSIC_VOLUME
+            introSound.Looped = false
+            introSound.Parent = SoundService
+            pcall(function() introSound:Play() end)
+        end)
 
-	    -- Background Image Fade In
-	    TweenService:Create(bgImage, TweenInfo.new(1.1, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-	        ImageTransparency = 0
-	    }):Play()
+        TweenService:Create(bgImage, TweenInfo.new(1.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            ImageTransparency = 0.14,
+        }):Play()
+        TweenService:Create(bgImage, TweenInfo.new(20, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+            Size = UDim2.fromScale(1.18, 1.18),
+        }):Play()
+        TweenService:Create(aura, TweenInfo.new(2.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+            BackgroundTransparency = 0.84,
+        }):Play()
+        TweenService:Create(haloOuter, TweenInfo.new(18, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), {
+            Rotation = 360,
+        }):Play()
+        TweenService:Create(haloInner, TweenInfo.new(13, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), {
+            Rotation = -360,
+        }):Play()
 
-	    -- Slow Zoom
-	    TweenService:Create(bgImage, TweenInfo.new(18, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-	        Size = UDim2.fromScale(1.18, 1.18)
-	    }):Play()
+        task.spawn(function()
+            local t0 = os.clock()
+            while introActive and introGui and introGui.Parent do
+                local elapsed = os.clock() - t0
+                for i, ray in ipairs(rays) do
+                    if ray.Parent then ray.Rotation = ((i - 1) * 20 + elapsed * 3.5) % 360 end
+                end
+                for _, item in ipairs(sparkles) do
+                    local star = item.object
+                    if star and star.Parent then
+                        local drift = (elapsed * (0.008 + (item.phase % 5) * 0.0015)) % 0.12
+                        star.Position = UDim2.fromScale(item.x, (item.y - drift) % 1)
+                        star.TextTransparency = 0.18 + (0.55 * (0.5 + 0.5 * math.sin(elapsed * 2.1 + item.phase)))
+                    end
+                end
+                task.wait(0.05)
+            end
+        end)
 
-	    -- Beat Flash (Red)
-	    task.spawn(function()
-	        while introActive and introGui.Parent do
-	            flash.BackgroundTransparency = 0.75
-	            TweenService:Create(flash, TweenInfo.new(0.12, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-	                BackgroundTransparency = 1
-	            }):Play()
-	            task.wait(BEAT)
-	        end
-	    end)
+        task.spawn(function()
+            while introActive and introGui and introGui.Parent do
+                flash.BackgroundTransparency = 0.975
+                TweenService:Create(flash, TweenInfo.new(0.38, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+                    BackgroundTransparency = 1,
+                }):Play()
+                task.wait(BEAT * 2)
+            end
+        end)
 
-	    -- Title
-	    task.wait(1.5)
-	    if not introActive then return end
+        task.wait(0.55)
+        if not introActive then return end
+        TweenService:Create(welcome, TweenInfo.new(0.65, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            TextTransparency = 0,
+            Position = UDim2.fromScale(0.5, 0.295),
+        }):Play()
+        task.wait(0.45)
+        if not introActive then return end
+        TweenService:Create(introTitle, TweenInfo.new(0.9, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Size = UDim2.fromScale(0.82, 0.19),
+            TextTransparency = 0,
+        }):Play()
+        TweenService:Create(titleStroke, TweenInfo.new(0.65), {Transparency = 0.2}):Play()
+        TweenService:Create(accentLine, TweenInfo.new(0.85, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            Size = UDim2.fromScale(0.36, 0.003),
+            BackgroundTransparency = 0,
+        }):Play()
+        TweenService:Create(introSubtitle, TweenInfo.new(0.8, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            TextTransparency = 0,
+        }):Play()
 
-	    TweenService:Create(introTitle, TweenInfo.new(0.7, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-	        Size = UDim2.fromScale(0.9, 0.18),
-	        TextTransparency = 0
-	    }):Play()
+        task.wait(8.2)
+        if not introActive then return end
+        TweenService:Create(introTitle, TweenInfo.new(0.9, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+            TextTransparency = 1,
+        }):Play()
+        TweenService:Create(introSubtitle, TweenInfo.new(0.8, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+            TextTransparency = 1,
+        }):Play()
+        TweenService:Create(welcome, TweenInfo.new(0.6), {TextTransparency = 1}):Play()
+        TweenService:Create(accentLine, TweenInfo.new(0.7), {BackgroundTransparency = 1}):Play()
+        TweenService:Create(bgImage, TweenInfo.new(1.0), {ImageTransparency = 1}):Play()
+        TweenService:Create(shade, TweenInfo.new(1.0), {BackgroundTransparency = 1}):Play()
+        task.wait(1.05)
+        finishIntro()
+    end
 
-	    TweenService:Create(titleStroke, TweenInfo.new(0.5), {
-	        Transparency = 0
-	    }):Play()
-
-	    TweenService:Create(accentLine, TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-	        Size = UDim2.fromScale(0.3, 0.003),
-	        BackgroundTransparency = 0
-	    }):Play()
-
-	    -- Title Shake
-	    task.wait(1)
-	    for i = 1, 18 do
-	        if not introActive then return end
-	        introTitle.Position = UDim2.fromScale(
-	            0.5 + math.random(-8, 8) / 1000,
-	            0.47 + math.random(-8, 8) / 1000
-	        )
-	        task.wait(0.025)
-	    end
-	    introTitle.Position = UDim2.fromScale(0.5, 0.47)
-
-	    -- Subtitle
-	    TweenService:Create(introSubtitle, TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-	        TextTransparency = 0
-	    }):Play()
-
-	    -- Hold
-	    task.wait(7)
-	    if not introActive then return end
-
-	    -- Final Beat Flashes
-	    for i = 1, 14 do
-	        if not introActive then return end
-	        flash.BackgroundTransparency = 0
-	        task.wait(0.025)
-	        flash.BackgroundTransparency = 1
-	        task.wait(0.065)
-	    end
-
-	    -- Extra Hold
-	    task.wait(2)
-	    if not introActive then return end
-
-	    -- Title Fade
-	    TweenService:Create(introTitle, TweenInfo.new(1.2, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-	        TextTransparency = 1
-	    }):Play()
-	    TweenService:Create(introSubtitle, TweenInfo.new(1, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-	        TextTransparency = 1
-	    }):Play()
-	    TweenService:Create(titleStroke, TweenInfo.new(1), {
-	        Transparency = 1
-	    }):Play()
-	    TweenService:Create(accentLine, TweenInfo.new(0.8, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-	        BackgroundTransparency = 1
-	    }):Play()
-
-	    -- Image Fade
-	    TweenService:Create(bgImage, TweenInfo.new(1.5, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-	        ImageTransparency = 1
-	    }):Play()
-	    TweenService:Create(dark, TweenInfo.new(1.5), {
-	        BackgroundTransparency = 1
-	    }):Play()
-
-	    -- Music Fade
-	    if introSound and introSound.Parent then
-	        TweenService:Create(introSound, TweenInfo.new(1.5, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-	            Volume = 0
-	        }):Play()
-	    end
-
-	    -- Final Black Fade
-	    local finalFade = Instance.new("Frame", introGui)
-	    finalFade.Size = UDim2.fromScale(1, 1)
-	    finalFade.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	    finalFade.BackgroundTransparency = 1
-	    finalFade.BorderSizePixel = 0
-	    finalFade.ZIndex = 1000
-
-	    TweenService:Create(finalFade, TweenInfo.new(1.5, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-	        BackgroundTransparency = 0
-	    }):Play()
-
-	    task.wait(1.6)
-	    finishIntro()
-	end
-
-	--============================================================
-	-- START INTRO
-	--============================================================
-
-	task.spawn(function()
-		pcall(createIntro)
-	end)
+    task.spawn(function()
+        local ok, err = pcall(createIntro)
+        if not ok then
+            warn("[LIGHT HUB INTRO]", err)
+            if introGui then pcall(function() introGui:Destroy() end) end
+            if introSound then pcall(function() introSound:Stop(); introSound:Destroy() end) end
+        end
+    end)
 end
-
 
 ----------------------------------------------------------------
 -- COLORS / STATE
@@ -2404,6 +2535,7 @@ TPDown = Enum.KeyCode.F,
 InstaReset = Enum.KeyCode.Z,
 DestroySentry = Enum.KeyCode.H,
 AutoSteal = nil, -- nil = None (no key)
+MenuToggle = Enum.KeyCode.RightShift, -- mở/ẩn menu chính
 	},
 	esp = false, tracer = false, antiLag = false,
 	antiKick = true, wallOpacity = 0.12, speedMethod = "Velocity",
@@ -4171,6 +4303,7 @@ end
 end
 
 local Top = Instance.new("Frame")
+Top.Name = "TopBar"
 Top.Size = UDim2.new(1, 0, 0, 36)
 Top.BackgroundColor3 = C.bg2
 Top.BorderSizePixel = 0
@@ -4183,27 +4316,29 @@ topFix.Size = UDim2.new(1, 0, 0, 12)
 topFix.Position = UDim2.new(0, 0, 1, -12)
 topFix.BackgroundColor3 = C.bg2
 topFix.BorderSizePixel = 0
+topFix.ZIndex = 15
 topFix.Parent = Top
 
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -80, 1, 0)
 Title.Position = UDim2.new(0, 14, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "TANRONG"
-Title.TextColor3 = Color3.fromRGB(255, 220, 220)
+Title.Text = "LIGHT HUB ALL GEAR"
+Title.TextColor3 = Color3.fromRGB(255, 248, 232)
 Title.TextSize = 12
 Title.Font = Enum.Font.GothamBlack
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.TextStrokeTransparency = 0.55
-Title.TextStrokeColor3 = Color3.fromRGB(235, 40, 55)
+Title.TextStrokeTransparency = 0.35
+Title.TextStrokeColor3 = Color3.fromRGB(168, 143, 99)
+Title.ZIndex = 16 -- nằm trên nền TopBar, tránh bị header che chữ
 Title.Parent = Top
 -- gradient chữ menu
 local titleGrad = Instance.new("UIGradient")
 titleGrad.Color = ColorSequence.new({
-	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-	ColorSequenceKeypoint.new(0.35, Color3.fromRGB(250, 80, 95)),
-	ColorSequenceKeypoint.new(0.65, Color3.fromRGB(240, 45, 60)),
-	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 100, 110)),
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 246)),
+	ColorSequenceKeypoint.new(0.35, Color3.fromRGB(235, 207, 151)),
+	ColorSequenceKeypoint.new(0.68, Color3.fromRGB(186, 222, 247)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 249, 229)),
 })
 titleGrad.Parent = Title
 task.spawn(function()
@@ -4224,6 +4359,7 @@ CloseBtn.TextColor3 = C.textDim
 CloseBtn.TextSize = 11
 CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.AutoButtonColor = false
+CloseBtn.ZIndex = 17
 CloseBtn.Parent = Top
 corner(CloseBtn, 6)
 
@@ -4502,6 +4638,8 @@ function keyName(k)
 	return k and tostring(k):gsub("Enum.KeyCode.", "") or "?"
 end
 local listening = nil
+local keybindCaptureActive = false
+local keybindCaptureGuardUntil = 0
 function keyBtn(parent, key, onSet, pos)
 	local b = Instance.new("TextButton")
 	b.Size = UDim2.new(0, 36, 0, 24)
@@ -4869,7 +5007,7 @@ keyRow("Key Auto Steal", "AutoSteal", 35)
 
 -- Full KEYBINDS TAB
 if pageKeys then
-	section(pageKeys, "* — KEYBINDS (PC) — None = khong phim", 1)
+	section(pageKeys, "* — KEYBINDS (PC) — Menu Toggle mặc định RightShift", 1)
 	local function keyRowTab(label, keyId, order)
 local r = row(pageKeys, 36, order)
 local t = Instance.new("TextLabel")
@@ -4905,6 +5043,7 @@ local listening = false
 local function startListen()
 if listening then return end
 listening = true
+keybindCaptureActive = true
 b.Text = "..."
 b.BackgroundColor3 = C.accent
 local conn
@@ -4914,6 +5053,8 @@ local code = inp.KeyCode
 if code == Enum.KeyCode.Escape then
 -- keep current
 listening = false
+keybindCaptureActive = false
+keybindCaptureGuardUntil = tick() + 0.25
 b.BackgroundColor3 = C.box
 refresh()
 if conn then conn:Disconnect() end
@@ -4925,6 +5066,8 @@ else
 St.keys[keyId] = code
 end
 listening = false
+keybindCaptureActive = false
+keybindCaptureGuardUntil = tick() + 0.25
 b.BackgroundColor3 = C.box
 refresh()
 pcall(saveCfg)
@@ -4934,15 +5077,16 @@ end
 b.MouseButton1Click:Connect(startListen)
 b.Activated:Connect(startListen)
 	end
-	keyRowTab("Drop", "Drop", 2)
-	keyRowTab("TP Down", "TPDown", 3)
-	keyRowTab("Insta Reset", "InstaReset", 4)
-	keyRowTab("Destroy Sentry", "DestroySentry", 5)
-	keyRowTab("Auto Steal (toggle)", "AutoSteal", 6)
+	keyRowTab("Menu Toggle (open / hide)", "MenuToggle", 2)
+	keyRowTab("Drop", "Drop", 3)
+	keyRowTab("TP Down", "TPDown", 4)
+	keyRowTab("Insta Reset", "InstaReset", 5)
+	keyRowTab("Destroy Sentry", "DestroySentry", 6)
+	keyRowTab("Auto Steal (toggle)", "AutoSteal", 7)
 	local hint = Instance.new("TextLabel")
 	hint.Size = UDim2.new(1, -16, 0, 40)
 	hint.BackgroundTransparency = 1
-	hint.Text = "Bam nut → nhan phim de gan\nBackspace/Delete = None | Esc = huy"
+	hint.Text = "Bấm nút bên phải rồi nhấn phím muốn gán\nBackspace/Delete = None | Esc = hủy | Menu mặc định: RightShift"
 	hint.TextColor3 = C.textDim
 	hint.TextSize = 11
 	hint.Font = Enum.Font.Gotham
@@ -5416,6 +5560,7 @@ Drop = Enum.KeyCode.X,
 TPDown = Enum.KeyCode.F,
 InstaReset = Enum.KeyCode.Z,
 DestroySentry = Enum.KeyCode.H,
+MenuToggle = Enum.KeyCode.RightShift,
 	}
 	pcall(function() setESP(false) end)
 	pcall(function() setTracer(false) end)
@@ -5479,10 +5624,10 @@ MiniGui.DisplayOrder = 121
 MiniGui.Parent = PlayerGui
 -- Helper tròn khi menu ẩn (LKZ style) — kéo được, ấn mở menu
 local Mini = Instance.new("TextButton")
-Mini.Size = UDim2.new(0, 110, 0, 36)
+Mini.Size = UDim2.new(0, 154, 0, 36)
 Mini.Position = UDim2.new(0, 14, 0, 90)
 Mini.BackgroundColor3 = Color3.fromRGB(18, 18, 26)
-Mini.Text = "TANRONG"
+Mini.Text = "LIGHT HUB ALL GEAR"
 Mini.TextColor3 = C.accent
 Mini.TextSize = 12
 Mini.Font = Enum.Font.GothamBold
@@ -5589,7 +5734,7 @@ St._mainPos = {Main.Position.X.Scale, Main.Position.X.Offset, Main.Position.Y.Sc
 end
 end)
 Mini.Visible = true
-Mini.Text = "TANRONG"
+Mini.Text = "LIGHT HUB ALL GEAR"
 -- Giữ vị trí mini đã lưu; nếu chưa có thì đặt gần chỗ menu
 pcall(function()
 local p = St._miniPos
@@ -6524,10 +6669,13 @@ _G.TANRONGApplyMobile()
 -- KEYBINDS (Drop / TP / Insta / Mode) — no menu toggle key
 ----------------------------------------------------------------
 UIS.InputBegan:Connect(function(input, gp)
-	if gp or listening then return end
+	if gp or listening or keybindCaptureActive or tick() < keybindCaptureGuardUntil then return end
 	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 	local k = input.KeyCode
-	if k == St.keys.Drop then runDrop()
+	if St.keys.MenuToggle and St.keys.MenuToggle ~= Enum.KeyCode.Unknown and k == St.keys.MenuToggle then
+		if Main.Visible then closeMenu() else openMenu() end
+		return
+	elseif k == St.keys.Drop then runDrop()
 	elseif k == St.keys.TPDown then doTPDown(true)
 	elseif k == St.keys.InstaReset then doInstaReset()
 	elseif k == St.keys.DestroySentry then setDestroySentry(not St.destroySentry)
@@ -8066,9 +8214,9 @@ task.defer(function()
 	local miniGui = PlayerGui:FindFirstChild("TANRONGHubFullMini")
 	local mini = miniGui and miniGui:FindFirstChildWhichIsA("TextButton")
 	if mini then
-mini.Size = UDim2.new(0, 110, 0, 36)
-mini.Text = "TANRONG"
-mini.TextSize = 22
+mini.Size = UDim2.new(0, 154, 0, 36)
+mini.Text = "LIGHT HUB ALL GEAR"
+mini.TextSize = 12
 local c0 = mini:FindFirstChildOfClass("UICorner")
 if c0 then c0.CornerRadius = UDim.new(0, 8) end
 	end
@@ -8080,7 +8228,7 @@ local top = main:FindFirstChild("TopBar") or main:FindFirstChildWhichIsA("Frame"
 if top then
 for _, x in ipairs(top:GetDescendants()) do
 if x:IsA("TextLabel") and (x.Text:find("TANRONG") or x.Text:find("Tanrong")) then
-x.Text = "TANRONG"
+x.Text = "LIGHT HUB ALL GEAR"
 end
 end
 end
@@ -11514,3 +11662,4 @@ local function toggleAntiDrop()
 end
 
 toggleBtn.MouseButton1Click:Connect(toggleAntiDrop)
+```
