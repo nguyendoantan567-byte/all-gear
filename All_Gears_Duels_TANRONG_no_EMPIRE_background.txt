@@ -1,4 +1,3 @@
-```
 --[[
 TANRONG — Full Menu
 Tab 1 Player: Anti Gummy/Ragdoll/Paintball/Boogie + Speed 3-mode (tanrong S2 loop)
@@ -11662,4 +11661,3 @@ local function toggleAntiDrop()
 end
 
 toggleBtn.MouseButton1Click:Connect(toggleAntiDrop)
-```
